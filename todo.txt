@@ -1,0 +1,7 @@
+- create a JSON schema to validate the request
+- limit how much data we read from the body here to throw an error and discard the request
+- grab the registered resource and validate the operation can be performed
+- detect the protocol version and run the logic based on the version
+- execute the operations in parallel or sequence, depending on the execution type defined in the request
+
+

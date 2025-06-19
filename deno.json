@@ -1,0 +1,19 @@
+{
+    "tasks": {
+        "b": "deno run --check --allow-net ./src/index.ts",
+        "l": "deno lint",
+        "f": "deno fmt",
+        "fl": "deno fmt && deno lint"
+    },
+    "imports": {
+        "@std/assert": "jsr:@std/assert@1",
+        "zod": "npm:zod@^3.24.2"
+    },
+    "fmt": {
+        "lineWidth": 80,
+        "indentWidth": 4,
+        "semiColons": true,
+        "singleQuote": true,
+        "proseWrap": "preserve"
+    }
+}

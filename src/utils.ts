@@ -1,0 +1,37 @@
+import { JsonObject } from './types/generic.ts';
+import { Resource, ResourceReference } from './types/index.ts';
+
+export function id<T>(): T {
+    return crypto.randomUUID() as T;
+}
+
+export function selectProps(
+    resource: Resource,
+    options: { select: string[] } | { ignore: string[] },
+): Partial<Resource> {
+    if ('select' in options) {
+        const r: Partial<Resource> = {};
+
+        for (const property of options.select) {
+            r[property] = resource[property];
+        }
+
+        return r;
+    }
+
+    if ('ignore' in options) {
+        const r: Partial<Resource> = { ...resource };
+
+        for (const property of options.ignore) {
+            delete r[property];
+        }
+
+        return r;
+    }
+
+    return {};
+}
+
+export function getResourceReference(resource: Resource): ResourceReference {
+    return `${resource._resource_name}:${resource._resource_id}` as ResourceReference;
+}

@@ -1,0 +1,27 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Server input",
+    "description": "Schema validator for input operations",
+    "type": "object",
+    "properties": {
+        "version": {
+            "description": "",
+            "type": "string"
+        },
+        "api": {
+            "description": "",
+            "type": "string"
+        },
+        "operations": {
+            "description": "",
+            "type": "array",
+            "items": {
+                "type": "object"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true
+        }
+    },
+    "required": ["version", "api", "operations"]
+}
