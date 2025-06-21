@@ -6,6 +6,7 @@ import {
     InvalidJsonContent,
     JRPCError,
     LogLevel,
+    OperationContext,
     ProcedureHandler,
     ProcedureInput,
     ProcedureNotFound,
@@ -13,7 +14,7 @@ import {
     ProtocolVersions,
     RequestContext,
     RequestMethodNotSupported,
-    RequestOperation, OperationContext,
+    RequestOperation,
     RequestOperationExecute,
     Resource,
     ResourceHandler,
@@ -27,7 +28,7 @@ import {
     UnhandledError,
     UpgradeRequestNotSupported,
 } from './types/index.ts';
-import { getResourceReference, selectProps } from './utils.ts';
+import { getResourceReference, removeUndefined, selectProps } from './utils.ts';
 
 export class Server {
     private logLevel: LogLevel = LogLevel.INFO;
@@ -50,6 +51,13 @@ export class Server {
     >();
 
     /**
+     * Server hook to be executed before processing any operation
+     */
+    private beforeAllFunc?: <R extends Resource>(
+        context: RequestContext,
+    ) => Promise<void>;
+
+    /**
      * Server hook to be executed before processing an operation
      */
     private beforeOperationFunc?: <R extends Resource>(
@@ -60,6 +68,13 @@ export class Server {
      * Server hook to be executed after an operation has been processed
      */
     private afterOperationFunc?: <R extends Resource>(
+        context: RequestContext,
+    ) => Promise<void>;
+
+    /**
+     * Server hook to be executed after all operations have been processed
+     */
+    private afterAllFunc?: <R extends Resource>(
         context: RequestContext,
     ) => Promise<void>;
 
@@ -154,6 +169,16 @@ export class Server {
         return this;
     }
 
+    public beforeAll(
+        func: (
+            context: RequestContext,
+        ) => Promise<void>,
+    ) {
+        this.beforeAllFunc = func;
+
+        return this;
+    }
+
     /**
      * Sets a function to be executed right before processing an operation
      */
@@ -176,6 +201,16 @@ export class Server {
         ) => Promise<void>,
     ) {
         this.afterOperationFunc = func;
+
+        return this;
+    }
+
+    public afterAll(
+        func: (
+            context: RequestContext,
+        ) => Promise<void>,
+    ) {
+        this.afterAllFunc = func;
 
         return this;
     }
@@ -356,11 +391,21 @@ export class Server {
         };
 
         const resources = this.resourceHandlers.get(apiVersion);
-        const context = new RequestContext();
+        const context = new RequestContext(removeUndefined({
+            settings: request.settings,
+            authentication: request.authentication,
+        }));
+
+        if (this.beforeAllFunc) {
+            await this.beforeAllFunc(context);
+        }
 
         // todo: execute the operations in parallel or sequence, depending on the execution type defined in the request
         for (const operation of operations) {
-            context.operationContext = new OperationContext(apiVersion, operation);
+            context.operationContext = new OperationContext(
+                apiVersion,
+                operation,
+            );
 
             if (this.beforeOperationFunc) {
                 await this.beforeOperationFunc(context);
@@ -402,6 +447,10 @@ export class Server {
         }
 
         this.returnSelectedProps(serverResponse, request.return);
+
+        if (this.afterAllFunc) {
+            await this.afterAllFunc(context);
+        }
 
         return serverResponse;
     }

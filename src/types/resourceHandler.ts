@@ -34,17 +34,20 @@ export class OperationContext {
 }
 
 export class RequestContext {
-    private requestContext: Record<string, unknown> = {};
+    private globalContext: Record<string, unknown> = {};
     public operationContext: OperationContext | undefined;
 
-    constructor() {}
+    constructor(public requestContext: {
+        settings?: ServerRequestSettings,
+        authentication?: ServerRequestAuthentication
+    }) {}
 
     public set(key: string, value: unknown) {
-        this.requestContext[key] = value;
+        this.globalContext[key] = value;
     }
 
     public get(key: string): undefined | unknown {
-        return this.requestContext[key] ?? undefined;
+        return this.globalContext[key] ?? undefined;
     }
 }
 
@@ -152,9 +155,22 @@ export type RequestOperation =
         | RequestOperationExecute
     );
 
+export type ServerRequestSettings =  {
+    execution_strategy?: "sequential" | "parallel",
+    operation_timeout?: number,
+};
+
+export type ServerRequestAuthentication =  {
+    schema: "bearer";
+    token: string;
+    token_format: "JWT"
+};
+
 export type ServerRequest = {
     jrpc: ProtocolVersion;
     api: ApiVersion;
+    settings?: ServerRequestSettings;
+    authentication?: ServerRequestAuthentication;
     operations: RequestOperation[];
     return?: { [key: string]: string[] };
 };
