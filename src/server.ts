@@ -620,11 +620,7 @@ export class Server {
             return e;
         }
 
-        return new UnhandledError(
-            this.configuration.env == JRPCEnvironment.PROD
-                ? undefined
-                : getErrorDetails(e as Error),
-        );
+        return new UnhandledError();
     }
 
     private processOperationResult(
