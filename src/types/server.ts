@@ -6,18 +6,12 @@ export enum LogLevel {
 }
 
 export enum HttpMethod {
-    GET = 'GET',
-    OPTIONS = 'OPTIONS',
     POST = 'POST',
-    PUT = 'PUT',
-    PATCH = 'PATCH',
-    DELETE = 'DELETE',
 }
 
-export enum HttpStatusCode {
-    OK = 200,
-}
 
-export enum HttpContentType {
-    APPLICATION_JSON = 'application/json',
+export enum JRPCEnvironment {
+    DEV = 'development',
+    STAGING = 'staging',
+    PROD = 'production'
 }

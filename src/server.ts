@@ -1,5 +1,6 @@
 import {
     ApiVersion,
+    JRPCEnvironment,
     ExpectedRequestBodyContent,
     getErrorDetails,
     HttpMethod,
@@ -51,32 +52,41 @@ export class Server {
     >();
 
     /**
-     * Server hook to be executed before processing any operation
+     * Function to execute before processing any operation
      */
     private beforeAllFunc?: <R extends Resource>(
         context: RequestContext,
     ) => Promise<void>;
 
     /**
-     * Server hook to be executed before processing an operation
+     * Function to execute before processing an operation
      */
     private beforeOperationFunc?: <R extends Resource>(
         context: RequestContext,
     ) => Promise<void>;
 
     /**
-     * Server hook to be executed after an operation has been processed
+     * Function to execute after an operation has been processed
      */
     private afterOperationFunc?: <R extends Resource>(
         context: RequestContext,
     ) => Promise<void>;
 
     /**
-     * Server hook to be executed after all operations have been processed
+     * Function to execute after all operations have been processed
      */
     private afterAllFunc?: <R extends Resource>(
         context: RequestContext,
     ) => Promise<void>;
+
+    /**
+     * Function to execute when an operation errs
+     */
+    private onOperationErrorFunc?: <R extends Resource>(
+        context: RequestContext,
+        operation: RequestOperation,
+        error: Error,
+    ) => Promise<JRPCError | undefined >;
 
     /**
      * List of connected WS clients
@@ -87,11 +97,11 @@ export class Server {
         private configuration: {
             host: string;
             port: number;
-            env: 'prod' | 'dev';
+            env: JRPCEnvironment;
         } = {
             host: 'localhost',
             port: 8000,
-            env: 'prod',
+            env: JRPCEnvironment.PROD,
         },
     ) {}
 
@@ -211,6 +221,18 @@ export class Server {
         ) => Promise<void>,
     ) {
         this.afterAllFunc = func;
+
+        return this;
+    }
+
+    public onOperationError(
+        func: (
+            context: RequestContext,
+            operation: RequestOperation,
+            error: Error,
+        ) => Promise<JRPCError | undefined>,
+    ) {
+        this.onOperationErrorFunc = func;
 
         return this;
     }
@@ -433,7 +455,7 @@ export class Server {
                 );
             } catch (e) {
                 this.processOperationError(
-                    e as Error,
+                    e as JRPCError,
                     operation,
                     serverResponse,
                 );
@@ -540,15 +562,7 @@ export class Server {
                 operation.properties as ProcedureInput,
             );
         } catch (e) {
-            if (e instanceof JRPCError) {
-                throw e;
-            }
-
-            throw new UnhandledError(
-                this.configuration.env == 'prod'
-                    ? undefined
-                    : getErrorDetails(e as Error),
-            );
+            throw await this.handleOperationError(context, operation, e as Error);
         }
     }
 
@@ -579,16 +593,38 @@ export class Server {
                 operation.properties,
             );
         } catch (e) {
-            if (e instanceof JRPCError) {
-                throw e;
-            }
-
-            throw new UnhandledError(
-                this.configuration.env == 'prod'
-                    ? undefined
-                    : getErrorDetails(e as Error),
-            );
+            throw (await this.handleOperationError(
+                context,
+                operation,
+                e as Error,
+            ));
         }
+    }
+
+    private async handleOperationError(
+        context: RequestContext,
+        operation: RequestOperation,
+        e: Error,
+    ): Promise<Error> {
+        let customError: JRPCError | undefined;
+
+        if (this.onOperationErrorFunc) {
+            customError = await this.onOperationErrorFunc(context, operation, e);
+        }
+
+        if (customError !== undefined) {
+            return customError;
+        }
+
+        if (e instanceof JRPCError) {
+            return e;
+        }
+
+        return new UnhandledError(
+            this.configuration.env == JRPCEnvironment.PROD
+                ? undefined
+                : getErrorDetails(e as Error),
+        );
     }
 
     private processOperationResult(
@@ -620,14 +656,14 @@ export class Server {
     }
 
     private processOperationError(
-        error: Error,
+        error: JRPCError,
         operation: RequestOperation,
         response: ServerResponse,
     ) {
-        // response.operations.push({
-        //     id: operation.id,
-        //     error,
-        // });
+        response.operations.push({
+            id: operation.id,
+            error: toErrorResponse(error),
+        });
     }
 
     private returnSelectedProps(

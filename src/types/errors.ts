@@ -14,7 +14,7 @@ export enum ErrorCodes {
 
 export class JRPCError extends Error {
     constructor(
-        public errorCode: string,
+        public code: string,
         message: string,
         public options?: {
             details?: {
@@ -96,7 +96,7 @@ export class UnhandledError extends JRPCError {
 
 export function toErrorResponse(error: JRPCError): ErrorResponse {
     return {
-        code: error.errorCode,
+        code: error.code,
         message: error.message,
         suggestion: error.options?.suggestions,
         details: error.options?.details,
@@ -108,7 +108,7 @@ export function getErrorDetails(e: Error): {
     error_message: string;
 } {
     return {
-        error_name: e.constructor.name,
+        error_name: e.toString(),
         error_message: e.message,
     };
 }
