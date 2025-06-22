@@ -1,10 +1,9 @@
 import {
     ApiVersion,
-    JRPCEnvironment,
     ExpectedRequestBodyContent,
-    getErrorDetails,
     HttpMethod,
     InvalidJsonContent,
+    JRPCEnvironment,
     JRPCError,
     LogLevel,
     OperationContext,
@@ -16,7 +15,11 @@ import {
     RequestContext,
     RequestMethodNotSupported,
     RequestOperation,
+    RequestOperationCreate,
+    RequestOperationDelete,
     RequestOperationExecute,
+    RequestOperationFetch,
+    RequestOperationUpdate,
     Resource,
     ResourceHandler,
     ResourceNotFound,
@@ -63,6 +66,7 @@ export class Server {
      */
     private beforeOperationFunc?: <R extends Resource>(
         context: RequestContext,
+        operation: RequestOperation,
     ) => Promise<void>;
 
     /**
@@ -70,6 +74,7 @@ export class Server {
      */
     private afterOperationFunc?: <R extends Resource>(
         context: RequestContext,
+        operation: RequestOperation,
     ) => Promise<void>;
 
     /**
@@ -86,7 +91,7 @@ export class Server {
         context: RequestContext,
         operation: RequestOperation,
         error: Error,
-    ) => Promise<JRPCError | undefined >;
+    ) => Promise<JRPCError | undefined>;
 
     /**
      * List of connected WS clients
@@ -195,6 +200,7 @@ export class Server {
     public beforeOperation(
         func: (
             context: RequestContext,
+            operation: RequestOperation,
         ) => Promise<void>,
     ) {
         this.beforeOperationFunc = func;
@@ -434,7 +440,7 @@ export class Server {
             );
 
             if (this.beforeOperationFunc) {
-                await this.beforeOperationFunc(context);
+                await this.beforeOperationFunc(context, operation);
             }
 
             let result: Resource | Resource[] | undefined;
@@ -449,7 +455,7 @@ export class Server {
                 context.operationContext.result = result;
 
                 if (this.afterOperationFunc) {
-                    await this.afterOperationFunc(context);
+                    await this.afterOperationFunc(context, operation);
                 }
 
                 this.processOperationResult(
@@ -468,6 +474,7 @@ export class Server {
             if (this.afterOperationFunc) {
                 await this.afterOperationFunc(
                     context,
+                    operation,
                 );
             }
         }
@@ -488,44 +495,40 @@ export class Server {
     ): Promise<Resource | Resource[] | undefined> {
         if ('execute' in operation) {
             return await this.handleExecuteOperation(
-                operation,
                 apiVersion,
-                context,
-            );
-        }
-
-        if ('create' in operation) {
-            await this.handleCRUDOperation(
-                'create',
                 operation,
-                apiVersion,
-                context,
-            );
-        }
-
-        if ('update' in operation) {
-            await this.handleCRUDOperation(
-                'update',
-                operation,
-                apiVersion,
-                context,
-            );
-        }
-
-        if ('delete' in operation) {
-            await this.handleCRUDOperation(
-                'delete',
-                operation,
-                apiVersion,
                 context,
             );
         }
 
         if ('fetch' in operation) {
-            await this.handleCRUDOperation(
-                'fetch',
-                operation,
+            return await this.handleFetchOperation(
                 apiVersion,
+                operation,
+                context,
+            );
+        }
+
+        if ('create' in operation) {
+            return await this.handleCreateOperation(
+                apiVersion,
+                operation,
+                context,
+            );
+        }
+
+        if ('update' in operation) {
+            return await this.handleUpdateOperation(
+                apiVersion,
+                operation,
+                context,
+            );
+        }
+
+        if ('delete' in operation) {
+            await this.handleDeleteOperation(
+                apiVersion,
+                operation,
                 context,
             );
         }
@@ -544,8 +547,8 @@ export class Server {
     }
 
     private async handleExecuteOperation<R extends Resource>(
-        operation: RequestOperation & RequestOperationExecute,
         apiVersion: ApiVersion,
+        operation: RequestOperation & RequestOperationExecute,
         context: RequestContext,
     ): Promise<Resource> {
         const apiProcedures = this.procedures.get(apiVersion);
@@ -566,25 +569,27 @@ export class Server {
                 operation.properties as ProcedureInput,
             );
         } catch (e) {
-            throw await this.handleOperationError(context, operation, e as Error);
+            throw await this.handleOperationError(
+                context,
+                operation,
+                e as Error,
+            );
         }
     }
 
-    private async handleCRUDOperation<R extends Resource>(
-        operationType: 'create' | 'fetch' | 'update' | 'delete',
-        operation: RequestOperation,
+    private async handleFetchOperation<R extends Resource>(
         apiVersion: ApiVersion,
+        operation: RequestOperationFetch,
         context: RequestContext,
     ) {
-        const apiResourceHandlers = this.procedures.get(apiVersion);
+        const apiResourceHandlers = this.resourceHandlers.get(apiVersion);
 
         if (!apiResourceHandlers) {
             throw new ResourceNotFound();
         }
 
         const resourceHandler = apiResourceHandlers.get(
-            // @ts-ignore
-            operation[operationType],
+            operation.fetch,
         );
 
         if (!resourceHandler) {
@@ -592,9 +597,108 @@ export class Server {
         }
 
         try {
-            // @ts-ignore
-            return await resourceHandler[operationType](
-                operation.properties,
+            return await resourceHandler.fetch(
+                operation.properties as Resource,
+                context,
+            );
+        } catch (e) {
+            throw (await this.handleOperationError(
+                context,
+                operation,
+                e as Error,
+            ));
+        }
+    }
+
+    private async handleCreateOperation<R extends Resource>(
+        apiVersion: ApiVersion,
+        operation: RequestOperationCreate,
+        context: RequestContext,
+    ) {
+        const apiResourceHandlers = this.resourceHandlers.get(apiVersion);
+
+        if (!apiResourceHandlers) {
+            throw new ResourceNotFound();
+        }
+
+        const resourceHandler = apiResourceHandlers.get(
+            operation.create,
+        );
+
+        if (!resourceHandler) {
+            throw new ResourceNotFound();
+        }
+
+        try {
+            return await resourceHandler.create(
+                operation.properties as Resource,
+                context,
+            );
+        } catch (e) {
+            throw (await this.handleOperationError(
+                context,
+                operation,
+                e as Error,
+            ));
+        }
+    }
+
+    private async handleUpdateOperation<R extends Resource>(
+        apiVersion: ApiVersion,
+        operation: RequestOperationUpdate,
+        context: RequestContext,
+    ) {
+        const apiResourceHandlers = this.resourceHandlers.get(apiVersion);
+
+        if (!apiResourceHandlers) {
+            throw new ResourceNotFound();
+        }
+
+        const resourceHandler = apiResourceHandlers.get(
+            operation.update,
+        );
+
+        if (!resourceHandler) {
+            throw new ResourceNotFound();
+        }
+
+        try {
+            return await resourceHandler.update(
+                operation.properties as Resource,
+                context,
+            );
+        } catch (e) {
+            throw (await this.handleOperationError(
+                context,
+                operation,
+                e as Error,
+            ));
+        }
+    }
+
+    private async handleDeleteOperation<R extends Resource>(
+        apiVersion: ApiVersion,
+        operation: RequestOperationDelete,
+        context: RequestContext,
+    ) {
+        const apiResourceHandlers = this.resourceHandlers.get(apiVersion);
+
+        if (!apiResourceHandlers) {
+            throw new ResourceNotFound();
+        }
+
+        const resourceHandler = apiResourceHandlers.get(
+            operation.delete,
+        );
+
+        if (!resourceHandler) {
+            throw new ResourceNotFound();
+        }
+
+        try {
+            return await resourceHandler.delete(
+                operation.properties as Resource,
+                context,
             );
         } catch (e) {
             throw (await this.handleOperationError(
@@ -613,7 +717,11 @@ export class Server {
         let customError: JRPCError | undefined;
 
         if (this.onOperationErrorFunc) {
-            customError = await this.onOperationErrorFunc(context, operation, e);
+            customError = await this.onOperationErrorFunc(
+                context,
+                operation,
+                e,
+            );
         }
 
         if (customError !== undefined) {

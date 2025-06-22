@@ -1,4 +1,3 @@
-import { JsonObject } from './types/generic.ts';
 import { Resource, ResourceReference } from './types/index.ts';
 
 export function id<T>(): T {
@@ -36,9 +35,12 @@ export function getResourceReference(resource: Resource): ResourceReference {
     return `${resource._resource_name}:${resource._resource_id}` as ResourceReference;
 }
 
-
-export function removeUndefined(obj: Record<string, unknown>): Record<string, unknown> {
+export function removeUndefined(
+    obj: Record<string, unknown>,
+): Record<string, unknown> {
     const objCopy = structuredClone(obj);
-    Object.keys(objCopy).forEach(key => objCopy[key] === undefined ? delete objCopy[key] : {});
-    return objCopy
+    Object.keys(objCopy).forEach((key) =>
+        objCopy[key] === undefined ? delete objCopy[key] : {}
+    );
+    return objCopy;
 }

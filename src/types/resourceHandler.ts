@@ -1,4 +1,4 @@
-import { Json, JsonObject } from './generic.ts';
+import { Json } from './generic.ts';
 
 declare const __brand: unique symbol;
 type Brand<B> = { [__brand]: B };
@@ -20,7 +20,7 @@ export type ResourceReference = Branded<
 export type Resource = {
     _resource_id: ResourceId;
     _resource_name: string;
-    [key: string]: unknown
+    [key: string]: unknown;
 };
 
 export class OperationContext {
@@ -37,10 +37,12 @@ export class RequestContext {
     private globalContext: Record<string, unknown> = {};
     public operationContext: OperationContext | undefined;
 
-    constructor(public requestContext: {
-        settings?: ServerRequestSettings,
-        authentication?: ServerRequestAuthentication
-    }) {}
+    constructor(
+        public requestContext: {
+            settings?: ServerRequestSettings;
+            authentication?: ServerRequestAuthentication;
+        },
+    ) {}
 
     public set(key: string, value: unknown) {
         this.globalContext[key] = value;
@@ -59,10 +61,9 @@ export abstract class ResourceHandler<R extends Resource> {
         properties?: R,
         context?: RequestContext,
     ): Promise<R | R[]>;
-    abstract create(properties: R, context?: RequestContext): Promise<R>;
+    abstract create(properties: R, context: RequestContext): Promise<R>;
     abstract update(
         properties: R,
-        returnProperties?: Json,
         context?: RequestContext,
     ): Promise<R>;
     abstract delete(where: unknown, context?: RequestContext): Promise<void>;
@@ -115,24 +116,24 @@ export type ServerResponseError = {
 
 export type RequestOperationBase = {
     id: RequestId;
-    properties: Json;
+    properties: Resource | ProcedureInput;
     return?: string[];
 };
 
-export type RequestOperationCreate = {
+export type RequestOperationCreate = RequestOperationBase & {
     create: ResourceName;
 };
 
-export type RequestOperationUpdate = {
+export type RequestOperationUpdate = RequestOperationBase & {
     update: ResourceName;
 };
 
-export type RequestOperationDelete = {
+export type RequestOperationDelete = RequestOperationBase & {
     delete: ResourceName;
     where: Json;
 };
 
-export type RequestOperationFetch = {
+export type RequestOperationFetch = RequestOperationBase & {
     fetch: ResourceName;
 };
 
@@ -155,15 +156,15 @@ export type RequestOperation =
         | RequestOperationExecute
     );
 
-export type ServerRequestSettings =  {
-    execution_strategy?: "sequential" | "parallel",
-    operation_timeout?: number,
+export type ServerRequestSettings = {
+    execution_strategy?: 'sequential' | 'parallel';
+    operation_timeout?: number;
 };
 
-export type ServerRequestAuthentication =  {
-    scheme: "bearer";
+export type ServerRequestAuthentication = {
+    scheme: 'bearer';
     token: string;
-    token_format: "JWT"
+    token_format: 'JWT';
 };
 
 export type ServerRequest = {

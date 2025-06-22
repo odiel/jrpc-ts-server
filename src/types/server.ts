@@ -9,9 +9,8 @@ export enum HttpMethod {
     POST = 'POST',
 }
 
-
 export enum JRPCEnvironment {
     DEV = 'development',
     STAGING = 'staging',
-    PROD = 'production'
+    PROD = 'production',
 }
