@@ -419,7 +419,11 @@ export class Server {
         }));
 
         if (this.beforeAllFunc) {
-            await this.beforeAllFunc(context);
+            try {
+                await this.beforeAllFunc(context);
+            } catch (e) {
+                // todo: return a response when this hook fails
+            }
         }
 
         // todo: execute the operations in parallel or sequence, depending on the execution type defined in the request

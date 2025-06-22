@@ -161,7 +161,7 @@ export type ServerRequestSettings =  {
 };
 
 export type ServerRequestAuthentication =  {
-    schema: "bearer";
+    scheme: "bearer";
     token: string;
     token_format: "JWT"
 };
