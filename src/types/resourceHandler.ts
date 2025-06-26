@@ -58,16 +58,20 @@ export abstract class ResourceHandler<R extends Resource> {
     }
 
     abstract fetch(
-        properties?: R,
-        context?: RequestContext,
+        args: {
+            context: RequestContext,
+            resource?: R,
+        }
     ): Promise<R | R[]>;
-    abstract create(properties: R, context: RequestContext): Promise<R>;
+    abstract create(args: { context: RequestContext, resource: R } ): Promise<R>;
     abstract update(
-        properties: R,
-        context?: RequestContext,
+        args: {
+            context: RequestContext,
+            resource: R,
+        }
     ): Promise<R>;
-    abstract delete(where: unknown, context?: RequestContext): Promise<void>;
-    abstract subscribe(properties?: R, context?: RequestContext): Promise<R>;
+    abstract delete(args: { context: RequestContext }): Promise<void>;
+    abstract subscribe(args : { context: RequestContext }): Promise<R>;
 }
 
 export type ProcedureInput = Branded<Json, 'ProcedureInput'>;
@@ -80,7 +84,7 @@ export abstract class ProcedureHandler<
     constructor(public name: string, public apiVersion: string = 'v1') {
     }
 
-    abstract execute(context: RequestContext, input?: I): Promise<O>;
+    abstract execute(args: { context: RequestContext, params?: I }): Promise<O>;
 }
 
 export type ErrorResponse = {
@@ -116,45 +120,22 @@ export type ServerResponseError = {
 
 export type RequestOperationBase = {
     id: RequestId;
-    properties: Resource | ProcedureInput;
     return?: string[];
 };
 
-export type RequestOperationCreate = RequestOperationBase & {
-    create: ResourceName;
+export type ResourceOperation = RequestOperationBase & {
+    type: 'create' | 'update' | 'delete' | 'fetch'
+    resource: ResourceName;
+    properties: Resource,
 };
 
-export type RequestOperationUpdate = RequestOperationBase & {
-    update: ResourceName;
+export type ProcedureOperation = RequestOperationBase & {
+    type: 'execute';
+    procedure: string;
+    params: ProcedureInput,
 };
 
-export type RequestOperationDelete = RequestOperationBase & {
-    delete: ResourceName;
-    where: Json;
-};
-
-export type RequestOperationFetch = RequestOperationBase & {
-    fetch: ResourceName;
-};
-
-export type RequestOperationSubscribe = {
-    subscribe: ResourceName;
-};
-
-export type RequestOperationExecute = {
-    execute: string;
-};
-
-export type RequestOperation =
-    & RequestOperationBase
-    & (
-        | RequestOperationCreate
-        | RequestOperationUpdate
-        | RequestOperationDelete
-        | RequestOperationFetch
-        | RequestOperationSubscribe
-        | RequestOperationExecute
-    );
+export type RequestOperation = ResourceOperation | ProcedureOperation;
 
 export type ServerRequestSettings = {
     execution_strategy?: 'sequential' | 'parallel';
