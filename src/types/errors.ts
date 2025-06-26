@@ -10,6 +10,8 @@ export enum ErrorCodes {
     REQUEST_METHOD_NOT_SUPPORTED = 'JRPC_REQUEST_METHOD_NOT_SUPPORTED',
     EXPECTED_REQUEST_BODY_CONTENT = 'JRPC_EXPECTED_REQUEST_BODY_CONTENT',
     INVALID_JSON_CONTENT = 'JRPC_INVALID_JSON_CONTENT',
+    NOT_AUTHENTICATED = 'JRPC_NOT_AUTHENTICATED',
+    NOT_AUTHORIZED = 'JRPC_NOT_AUTHORIZED',
 }
 
 export class JRPCError extends Error {
@@ -95,16 +97,31 @@ export class ResourceNotFound extends JRPCError {
 }
 
 export class UnhandledError extends JRPCError {
-    constructor(details?: { error_name: string; error_message: string }) {
+    constructor(e: Error) {
         super(
             ErrorCodes.UNHANDLED_ERROR,
-            'An unhandled error occurred in the application layer.',
+            'An unhandled error occurred.',
             {
-                suggestions: [
-                    'ensure all errors in the application are captured and a custom error is provided as feedback',
-                ],
-                details,
+                details: getErrorDetails(e),
             },
+        );
+    }
+}
+
+export class NotAuthenticatedError extends JRPCError {
+    constructor() {
+        super(
+            ErrorCodes.NOT_AUTHENTICATED,
+            'Not authenticated.',
+        );
+    }
+}
+
+export class NotAuthorizedError extends JRPCError {
+    constructor() {
+        super(
+            ErrorCodes.NOT_AUTHORIZED,
+            'Not authorized.',
         );
     }
 }
