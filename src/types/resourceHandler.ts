@@ -54,24 +54,26 @@ export class RequestContext {
 }
 
 export abstract class ResourceHandler<R extends Resource> {
-    constructor(public name: string, public apiVersion: string = 'v1') {
+    constructor(public name: ResourceName, public apiVersion: string = 'v1') {
     }
 
     abstract fetch(
         args: {
-            context: RequestContext,
-            resource?: R,
-        }
+            context: RequestContext;
+            resource?: R;
+            where?: ResourceOperationWhere;
+        },
     ): Promise<R | R[]>;
-    abstract create(args: { context: RequestContext, resource: R } ): Promise<R>;
+    abstract create(args: { context: RequestContext; resource: R }): Promise<R>;
     abstract update(
         args: {
-            context: RequestContext,
-            resource: R,
-        }
+            context: RequestContext;
+            resource: R;
+            where?: ResourceOperationWhere;
+        },
     ): Promise<R>;
-    abstract delete(args: { context: RequestContext }): Promise<void>;
-    abstract subscribe(args : { context: RequestContext }): Promise<R>;
+    abstract delete(args: { context: RequestContext, where?: ResourceOperationWhere; }): Promise<void>;
+    abstract subscribe(args: { context: RequestContext, where?: ResourceOperationWhere; }): Promise<R>;
 }
 
 export type ProcedureInput = Branded<Json, 'ProcedureInput'>;
@@ -84,7 +86,7 @@ export abstract class ProcedureHandler<
     constructor(public name: string, public apiVersion: string = 'v1') {
     }
 
-    abstract execute(args: { context: RequestContext, params?: I }): Promise<O>;
+    abstract execute(args: { context: RequestContext; params?: I }): Promise<O>;
 }
 
 export type ErrorResponse = {
@@ -123,16 +125,30 @@ export type RequestOperationBase = {
     return?: string[];
 };
 
-export type ResourceOperation = RequestOperationBase & {
-    type: 'create' | 'update' | 'delete' | 'fetch'
-    resource: ResourceName;
-    properties: Resource,
+export type ResourceOperationWhere = {
+    [key: string]: string | { equal: string } | { match: string } | {
+        gt: string;
+        inclusive: boolean;
+    } | { lt: string; inclusive: boolean };
 };
+
+export type ResourceOperation =
+    & RequestOperationBase
+    & {
+        resource: ResourceName;
+        properties: Resource;
+    }
+    & ({
+        type: 'create';
+    } | {
+        type: 'update' | 'delete' | 'fetch';
+        where?: ResourceOperationWhere;
+    });
 
 export type ProcedureOperation = RequestOperationBase & {
     type: 'execute';
     procedure: string;
-    params: ProcedureInput,
+    params: ProcedureInput;
 };
 
 export type RequestOperation = ResourceOperation | ProcedureOperation;

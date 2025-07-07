@@ -1,6 +1,6 @@
 import { Resource, ResourceReference } from './types/index.ts';
 
-export function id<T>(): T {
+export function id<T extends string>(): T {
     return crypto.randomUUID() as T;
 }
 
@@ -32,7 +32,7 @@ export function selectProps(
 }
 
 export function getResourceReference(resource: Resource): ResourceReference {
-    return `${resource._resource_name}:${resource._resource_id}` as ResourceReference;
+    return `${resource._resource_name}:${resource._resource_id ? resource._resource_id : 'unknown'}` as ResourceReference;
 }
 
 export function removeUndefined(

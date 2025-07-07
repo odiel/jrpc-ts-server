@@ -456,8 +456,8 @@ export class Server {
 
             try {
                 result = await this.processOperation(
-                    operation,
                     apiVersion,
+                    operation,
                     context,
                 );
 
@@ -531,16 +531,10 @@ export class Server {
     }
 
     private async processOperation<R extends Resource>(
-        operation: RequestOperation,
         apiVersion: ApiVersion,
+        operation: RequestOperation,
         context: RequestContext,
     ): Promise<undefined | Resource | Resource[]> {
-        return await this.handleExecuteOperation(
-            apiVersion,
-            operation,
-            context,
-        );
-
         // if ('subscribe' in operation) {
         //     if (resources) {
         //         const resourceHandler = resources.get(
@@ -552,13 +546,7 @@ export class Server {
         //         }
         //     }
         // }
-    }
 
-    private async handleExecuteOperation<R extends Resource>(
-        apiVersion: ApiVersion,
-        operation: RequestOperation,
-        context: RequestContext,
-    ): Promise<undefined | Resource | Resource[]> {
         if (operation.type == 'execute') {
             const apiProcedures = this.procedures.get(apiVersion);
 
@@ -605,6 +593,7 @@ export class Server {
                     {
                         context,
                         resource: operation.properties,
+                        where: 'where' in operation ? operation.where : undefined
                     }
                 );
 
