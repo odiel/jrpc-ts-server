@@ -7,8 +7,8 @@ import {
     JRPCError,
     LogLevel,
     OperationContext,
+    OperationResult,
     ProcedureHandler,
-    ProcedureInput,
     ProcedureNotFound,
     ProtocolVersion,
     ProtocolVersions,
@@ -27,7 +27,7 @@ import {
     UnhandledError,
     UpgradeRequestNotSupported,
 } from './types/index.ts';
-import { getResourceReference, removeUndefined, selectProps } from './utils.ts';
+import { removeUndefined, selectProps } from './utils.ts';
 
 export class Server {
     private logLevel: LogLevel = LogLevel.INFO;
@@ -38,7 +38,7 @@ export class Server {
      */
     private procedures = new Map<
         string,
-        Map<string, ProcedureHandler<ProcedureInput, Resource>>
+        Map<string, ProcedureHandler<Resource>>
     >();
 
     /**
@@ -50,7 +50,7 @@ export class Server {
     >();
 
     /**
-     * Function to execute before processing any operation
+     * Function to execute as first step of a request right before processing any operation
      */
     private beforeAllFunc?: <R extends Resource>(
         context: RequestContext,
@@ -95,82 +95,56 @@ export class Server {
             host: string;
             port: number;
             env: JRPCEnvironment;
-        } = {
-            host: 'localhost',
-            port: 8000,
-            env: JRPCEnvironment.PROD,
         },
     ) {}
 
     /**
-     * Method to register a single procedure
-     */
-    public registerProcedure(
-        procedure: ProcedureHandler<ProcedureInput, Resource>,
-    ): Server {
-        let apiProcedures = this.procedures.get(procedure.apiVersion);
-
-        if (!apiProcedures) {
-            apiProcedures = new Map<
-                string,
-                ProcedureHandler<ProcedureInput, Resource>
-            >();
-            this.procedures.set(procedure.apiVersion, apiProcedures);
-        }
-
-        apiProcedures.set(procedure.name, procedure);
-
-        return this;
-    }
-
-    /**
-     * Method to register multiple procedures
+     * Method to register procedures
      */
     public registerProcedures(
-        procedures: ProcedureHandler<ProcedureInput, Resource>[],
+        procedures: ProcedureHandler<Resource>[],
     ): Server {
         for (const procedure of procedures) {
-            this.registerProcedure(procedure);
+            let apiProcedures = this.procedures.get(procedure.apiVersion);
+
+            if (!apiProcedures) {
+                apiProcedures = new Map<
+                    string,
+                    ProcedureHandler<Resource>
+                >();
+                this.procedures.set(procedure.apiVersion, apiProcedures);
+            }
+
+            apiProcedures.set(procedure.name, procedure);
         }
 
         return this;
     }
 
     /**
-     * Method to register a single resource handler
-     */
-    public registerResourceHandler(
-        resourceHandler: ResourceHandler<Resource>,
-    ): Server {
-        let apiResourceHandlers = this.resourceHandlers.get(
-            resourceHandler.apiVersion,
-        );
-
-        if (!apiResourceHandlers) {
-            apiResourceHandlers = new Map<
-                string,
-                ResourceHandler<Resource>
-            >();
-
-            this.resourceHandlers.set(
-                resourceHandler.apiVersion,
-                apiResourceHandlers,
-            );
-        }
-
-        apiResourceHandlers!.set(resourceHandler.name, resourceHandler);
-
-        return this;
-    }
-
-    /**
-     * Method to register multiple resource handlers
+     * Method to register resource handlers
      */
     public registerResourceHandlers(
         resourceHandlers: ResourceHandler<Resource>[],
     ): Server {
         for (const resourceHandler of resourceHandlers) {
-            this.registerResourceHandler(resourceHandler);
+            let apiResourceHandlers = this.resourceHandlers.get(
+                resourceHandler.apiVersion,
+            );
+
+            if (!apiResourceHandlers) {
+                apiResourceHandlers = new Map<
+                    string,
+                    ResourceHandler<Resource>
+                >();
+
+                this.resourceHandlers.set(
+                    resourceHandler.apiVersion,
+                    apiResourceHandlers,
+                );
+            }
+
+            apiResourceHandlers.set(resourceHandler.name, resourceHandler);
         }
 
         return this;
@@ -263,7 +237,7 @@ export class Server {
             port,
             onListen() {
                 console.log(
-                    `Server listening on http://${hostname}:${port}/.`,
+                    `Server listening for requests on http://${hostname}:${port}/`,
                 );
             },
         }, handler);
@@ -298,12 +272,6 @@ export class Server {
      * Handles request coming through HTTP
      */
     private async handleHTTPRequest(req: Request): Promise<Response> {
-        const url = new URL(req.url);
-
-        if (this.logLevel <= LogLevel.INFO) {
-            console.log(`http: ${req.method} ${url.pathname}`);
-        }
-
         if (req.method !== HttpMethod.POST) {
             const response: ServerResponseError = {
                 version: this.protocolVersion,
@@ -380,7 +348,35 @@ export class Server {
             }
         });
         socket.addEventListener('message', async (event) => {
-            const result = await this.processRequest(event.data);
+            if (!event.data) {
+                const response: ServerResponseError = {
+                    version: this.protocolVersion,
+                    api: 'unknown',
+                    error: toErrorResponse(new ExpectedRequestBodyContent()),
+                };
+
+                socket.send(JSON.stringify(response));
+                return;
+            }
+
+            let request;
+
+            try {
+                request = JSON.parse(event.data);
+            } catch (_e) {
+                const response: ServerResponseError = {
+                    version: this.protocolVersion,
+                    api: 'unknown',
+                    error: toErrorResponse(new InvalidJsonContent()),
+                };
+
+                socket.send(JSON.stringify(response));
+                return;
+            }
+
+            // todo: validate the input JSON payload
+
+            const result = await this.processRequest(request, socket);
 
             socket.send(JSON.stringify(result));
         });
@@ -398,6 +394,7 @@ export class Server {
 
     private async processRequest(
         request: ServerRequest,
+        socket?: ServerWebSocket,
     ): Promise<ServerResponse> {
         const { jrpc, api: apiVersion, operations } = request;
 
@@ -408,7 +405,6 @@ export class Server {
             resources: {},
         };
 
-        const resources = this.resourceHandlers.get(apiVersion);
         const context = new RequestContext(removeUndefined({
             settings: request.settings,
             authentication: request.authentication,
@@ -452,13 +448,14 @@ export class Server {
                 }
             }
 
-            let result: Resource | Resource[] | undefined;
+            let result: OperationResult;
 
             try {
                 result = await this.processOperation(
                     apiVersion,
                     operation,
                     context,
+                    socket,
                 );
 
                 context.operationContext.result = result;
@@ -534,19 +531,8 @@ export class Server {
         apiVersion: ApiVersion,
         operation: RequestOperation,
         context: RequestContext,
-    ): Promise<undefined | Resource | Resource[]> {
-        // if ('subscribe' in operation) {
-        //     if (resources) {
-        //         const resourceHandler = resources.get(
-        //             operation.subscribe,
-        //         );
-        //
-        //         if (resourceHandler) {
-        //             await resourceHandler.subscribe(operation.return);
-        //         }
-        //     }
-        // }
-
+        socket?: ServerWebSocket,
+    ): Promise<OperationResult> {
         if (operation.type == 'execute') {
             const apiProcedures = this.procedures.get(apiVersion);
 
@@ -562,11 +548,12 @@ export class Server {
             }
 
             try {
-                return await procedureHandler.execute({
-                        context,
-                        params: operation.params,
-                    }
-                );
+                const r = await procedureHandler.execute({
+                    context,
+                    resource: operation.resource,
+                });
+
+                return r;
             } catch (e) {
                 throw await this.handleOperationError(
                     context,
@@ -574,41 +561,53 @@ export class Server {
                     e as Error,
                 );
             }
-        } else {
-            const apiResourceHandlers = this.resourceHandlers.get(apiVersion);
+        }
 
-            if (!apiResourceHandlers) {
-                throw new ResourceNotFound();
-            }
+        const apiResourceHandlers = this.resourceHandlers.get(apiVersion);
 
-            const resource = operation.resource;
-            const resourceHandler = apiResourceHandlers.get(resource);
+        if (!apiResourceHandlers) {
+            throw new ResourceNotFound();
+        }
 
-            if (!resourceHandler) {
-                throw new ProcedureNotFound();
-            }
+        const resource = operation.resource;
+        const resourceHandler = apiResourceHandlers.get(resource);
 
-            try {
-                const result = await resourceHandler[operation.type](
-                    {
-                        context,
-                        resource: operation.properties,
-                        where: 'where' in operation ? operation.where : undefined
-                    }
-                );
+        if (!resourceHandler) {
+            throw new ResourceNotFound();
+        }
 
-                if (result) {
-                    return result
-                }
-
-                return undefined;
-            } catch (e) {
-                throw await this.handleOperationError(
+        if (operation.type == 'subscribe') {
+            if (socket) {
+                resourceHandler.subscribe({
                     context,
-                    operation,
-                    e as Error,
-                );
+                    socket,
+                    where: 'where' in operation ? operation.where : undefined,
+                });
             }
+
+            return undefined;
+        }
+
+        try {
+            const result = await resourceHandler[operation.type](
+                {
+                    context,
+                    resource: operation.properties,
+                    where: 'where' in operation ? operation.where : undefined,
+                },
+            );
+
+            if (result) {
+                return result;
+            }
+
+            return undefined;
+        } catch (e) {
+            throw await this.handleOperationError(
+                context,
+                operation,
+                e as Error,
+            );
         }
     }
 
@@ -638,30 +637,35 @@ export class Server {
     }
 
     private processOperationResult(
-        resources: Resource | Resource[] | undefined,
+        operationResult: OperationResult,
         operation: RequestOperation,
         response: ServerResponse,
     ) {
-        if (resources === undefined) return;
-
-        if (Array.isArray(resources)) {
-            const references = [];
-
-            for (const resource of resources) {
-                const resourceReference = getResourceReference(resource);
-                response.resources[resourceReference] = resource;
-                references.push(resourceReference);
-            }
-
-            response.operations.push({ id: operation.id, result: references });
-        } else {
-            const resourceReference = getResourceReference(resources);
-
+        if (operationResult === undefined) {
             response.operations.push({
                 id: operation.id,
-                result: resourceReference,
+                results: null,
             });
-            response.resources[resourceReference] = resources;
+
+            return;
+        }
+
+        const references = Object.keys(operationResult) as ResourceReference[];
+
+        response.operations.push({
+            id: operation.id,
+            results: references.length > 1
+                ? references
+                : references.length == 0
+                ? null
+                : references[0],
+        });
+
+        for (const reference of references) {
+            const resource = operationResult[reference];
+            if (resource) {
+                response.resources[reference] = resource;
+            }
         }
     }
 

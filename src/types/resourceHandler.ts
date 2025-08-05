@@ -1,30 +1,25 @@
-import { Json } from './generic.ts';
-
-declare const __brand: unique symbol;
-type Brand<B> = { [__brand]: B };
-export type Branded<T, B> = T & Brand<B>;
-
-export type ProtocolVersion = Branded<string, 'ProtocolVersion'>;
-export const ProtocolVersions = {
-    v1: 'v1' as ProtocolVersion,
-};
-export type ApiVersion = Branded<string, 'ApiVersion'>;
-export type RequestId = Branded<string, 'RequestId'>;
-export type ResourceName = Branded<string, 'ResourceName'>;
-export type ResourceId = Branded<string, 'ResourceId'>;
-export type ResourceReference = Branded<
-    `${ResourceName}:${ResourceId}`,
-    'ResourceReference'
->;
+import {
+    ApiVersion,
+    ResourceId,
+    ResourceReference,
+    ServerWebSocket,
+    ProtocolVersion,
+    ResourceName,
+    RequestId
+} from './common.ts';
 
 export type Resource = {
     _resource_id: ResourceId;
-    _resource_name: string;
+    _resource_name: ResourceName;
     [key: string]: unknown;
 };
 
+export type OperationResult =
+    | Record<ResourceReference, Resource | null>
+    | undefined;
+
 export class OperationContext {
-    public result: Resource | Resource[] | undefined;
+    public result: OperationResult;
 
     constructor(
         public readonly apiVersion: ApiVersion,
@@ -54,39 +49,73 @@ export class RequestContext {
 }
 
 export abstract class ResourceHandler<R extends Resource> {
-    constructor(public name: ResourceName, public apiVersion: string = 'v1') {
+    protected subscriptions: {
+        context: RequestContext;
+        socket: ServerWebSocket;
+        where?: OperationWhere;
+    }[];
+
+    constructor(
+        public name: ResourceName,
+        public apiVersion: string = 'v1',
+    ) {
+        this.subscriptions = [];
     }
 
+    abstract create(
+        props: { context: RequestContext; resource: Partial<R> },
+    ): Promise<OperationResult>;
+
     abstract fetch(
-        args: {
+        props: {
             context: RequestContext;
-            resource?: R;
-            where?: ResourceOperationWhere;
+            resource?: Partial<R>;
+            where?: OperationWhere;
         },
-    ): Promise<R | R[]>;
-    abstract create(args: { context: RequestContext; resource: R }): Promise<R>;
+    ): Promise<OperationResult>;
+
     abstract update(
-        args: {
+        props: {
             context: RequestContext;
-            resource: R;
-            where?: ResourceOperationWhere;
+            resource: Partial<R>;
+            where?: OperationWhere;
         },
-    ): Promise<R>;
-    abstract delete(args: { context: RequestContext, where?: ResourceOperationWhere; }): Promise<void>;
-    abstract subscribe(args: { context: RequestContext, where?: ResourceOperationWhere; }): Promise<R>;
+    ): Promise<OperationResult>;
+
+    abstract delete(
+        props: { context: RequestContext; where?: OperationWhere },
+    ): Promise<OperationResult>;
+
+    public subscribe(
+        props: {
+            context: RequestContext;
+            socket: ServerWebSocket;
+            where?: OperationWhere;
+        },
+    ): void {
+        this.subscriptions.push(props);
+    }
+
+    abstract publishChange(
+        operationType: OperationTypesForSubscriptions,
+        resource: R,
+    ): Promise<void>;
+
+    abstract onChange(
+        operationType: OperationTypesForSubscriptions,
+        resource: R,
+    ): Promise<void>;
 }
 
-export type ProcedureInput = Branded<Json, 'ProcedureInput'>;
-export type ProcedureOutput = Branded<Json, 'ProcedureOutput'>;
-
 export abstract class ProcedureHandler<
-    I extends ProcedureInput,
-    O extends Resource,
+    R extends Resource,
 > {
     constructor(public name: string, public apiVersion: string = 'v1') {
     }
 
-    abstract execute(args: { context: RequestContext; params?: I }): Promise<O>;
+    abstract execute(
+        args: { context: RequestContext; resource?: R },
+    ): Promise<OperationResult>;
 }
 
 export type ErrorResponse = {
@@ -102,7 +131,7 @@ export type ErrorResponse = {
 export type ResponseResult =
     & { id: RequestId }
     & ({
-        result: unknown;
+        results: ResourceReference | ResourceReference[] | null;
     } | {
         error: ErrorResponse;
     });
@@ -125,12 +154,25 @@ export type RequestOperationBase = {
     return?: string[];
 };
 
-export type ResourceOperationWhere = {
-    [key: string]: string | { equal: string } | { match: string } | {
+export type OperationWhere = {
+    [key: string]: string | string[] | { equal: string } | { match: string } | {
         gt: string;
         inclusive: boolean;
     } | { lt: string; inclusive: boolean };
 };
+
+export enum OperationTypes {
+    CREATE = 'create',
+    UPDATE = 'update',
+    DELETE = 'delete',
+    FETCH = 'fetch',
+    SUBSCRIBE = 'subscribe',
+}
+
+export type OperationTypesForSubscriptions =
+    | OperationTypes.CREATE
+    | OperationTypes.UPDATE
+    | OperationTypes.DELETE;
 
 export type ResourceOperation =
     & RequestOperationBase
@@ -139,16 +181,20 @@ export type ResourceOperation =
         properties: Resource;
     }
     & ({
-        type: 'create';
+        type: OperationTypes.CREATE;
     } | {
-        type: 'update' | 'delete' | 'fetch';
-        where?: ResourceOperationWhere;
+        type:
+            | OperationTypes.UPDATE
+            | OperationTypes.DELETE
+            | OperationTypes.FETCH
+            | OperationTypes.SUBSCRIBE;
+        where?: OperationWhere;
     });
 
 export type ProcedureOperation = RequestOperationBase & {
     type: 'execute';
     procedure: string;
-    params: ProcedureInput;
+    resource: Resource;
 };
 
 export type RequestOperation = ResourceOperation | ProcedureOperation;

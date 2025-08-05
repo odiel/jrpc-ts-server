@@ -1,15 +1,15 @@
 import { ErrorResponse } from './resourceHandler.ts';
 
 export enum ErrorCodes {
-    GENERIC_ERROR = 'JRPC_GENERIC_ERROR',
-    PROCEDURE_NOT_FOUND = 'JRPC_PROCEDURE_NOT_FOUND',
-    RESOURCE_NOT_FOUND = 'JRPC_RESOURCE_NOT_FOUND',
-    UNHANDLED_ERROR = 'JRPC_UNHANDLED_ERROR',
-    UNEXPECTED_ERROR = 'JRPC_UNEXPECTED_ERROR',
     UPGRADE_REQUEST_NOT_SUPPORTED = 'JRPC_UPGRADE_REQUEST_NOT_SUPPORTED',
     REQUEST_METHOD_NOT_SUPPORTED = 'JRPC_REQUEST_METHOD_NOT_SUPPORTED',
     EXPECTED_REQUEST_BODY_CONTENT = 'JRPC_EXPECTED_REQUEST_BODY_CONTENT',
     INVALID_JSON_CONTENT = 'JRPC_INVALID_JSON_CONTENT',
+
+    PROCEDURE_NOT_FOUND = 'JRPC_PROCEDURE_NOT_FOUND',
+    RESOURCE_NOT_FOUND = 'JRPC_RESOURCE_NOT_FOUND',
+    UNHANDLED_ERROR = 'JRPC_UNHANDLED_ERROR',
+
     NOT_AUTHENTICATED = 'JRPC_NOT_AUTHENTICATED',
     NOT_AUTHORIZED = 'JRPC_NOT_AUTHORIZED',
 }
@@ -32,7 +32,7 @@ export class JRPCError extends Error {
 
 export class UpgradeRequestNotSupported extends JRPCError {
     constructor() {
-        super(ErrorCodes.UPGRADE_REQUEST_NOT_SUPPORTED, 'Unexpected error.', {
+        super(ErrorCodes.UPGRADE_REQUEST_NOT_SUPPORTED, 'Upgrade request not supported.', {
             suggestions: [],
         });
     }
@@ -66,7 +66,7 @@ export class InvalidJsonContent extends JRPCError {
     constructor() {
         super(
             ErrorCodes.INVALID_JSON_CONTENT,
-            'The request body is not a valid JSON.',
+            'The request body content must be a valid JSON.',
             {
                 suggestions: [],
             },
@@ -76,22 +76,16 @@ export class InvalidJsonContent extends JRPCError {
 
 export class ProcedureNotFound extends JRPCError {
     constructor() {
-        super(ErrorCodes.PROCEDURE_NOT_FOUND, 'Procedure was not found.', {
-            suggestions: [
-                'ensure the procedure name is properly typed',
-                'ensure the request is being made to the right API version',
-            ],
+        super(ErrorCodes.PROCEDURE_NOT_FOUND, 'Procedure not found.', {
+            suggestions: [],
         });
     }
 }
 
 export class ResourceNotFound extends JRPCError {
     constructor() {
-        super(ErrorCodes.RESOURCE_NOT_FOUND, 'Resource was not found.', {
-            suggestions: [
-                'ensure the resource name is properly typed',
-                'ensure the resource has been registered in the right API version',
-            ],
+        super(ErrorCodes.RESOURCE_NOT_FOUND, 'Resource not found.', {
+            suggestions: [],
         });
     }
 }
@@ -140,7 +134,7 @@ export function getErrorDetails(e: Error): {
     error_message: string;
 } {
     return {
-        error_name: e.toString(),
+        error_name: e.constructor.name,
         error_message: e.message,
     };
 }

@@ -1,4 +1,9 @@
-import { Resource, ResourceReference } from './types/index.ts';
+import {
+    OperationResult,
+    Resource,
+    OperationWhere,
+    ResourceReference, OperationTypesForSubscriptions,
+} from './types/index.ts';
 
 export function id<T extends string>(): T {
     return crypto.randomUUID() as T;
@@ -32,7 +37,34 @@ export function selectProps(
 }
 
 export function getResourceReference(resource: Resource): ResourceReference {
-    return `${resource._resource_name}:${resource._resource_id ? resource._resource_id : 'unknown'}` as ResourceReference;
+    return `${resource._resource_name}:${
+        resource._resource_id ? resource._resource_id : 'unknown'
+    }` as ResourceReference;
+}
+
+export function generateSubscriptionResult(operationType: OperationTypesForSubscriptions, resource: Resource) {
+    return {
+        type: operationType,
+        resource,
+    }
+}
+
+export function generateOperationResult(
+    resources: Resource | Resource[],
+): OperationResult {
+    const operationResult: OperationResult = {};
+
+    if (Array.isArray(resources)) {
+        for (const resource of resources as Resource[]) {
+            const ref = getResourceReference(resource);
+            operationResult[ref] = resource;
+        }
+    } else {
+        const ref = getResourceReference(resources as Resource);
+        operationResult[ref] = resources as Resource;
+    }
+
+    return operationResult;
 }
 
 export function removeUndefined(
