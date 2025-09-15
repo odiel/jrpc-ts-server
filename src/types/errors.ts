@@ -1,4 +1,4 @@
-import { ErrorResponse } from './resourceHandler.ts';
+import { ErrorResponse } from './resource_handler.ts';
 
 export enum ErrorCodes {
     UPGRADE_REQUEST_NOT_SUPPORTED = 'JRPC_UPGRADE_REQUEST_NOT_SUPPORTED',
@@ -86,6 +86,17 @@ export class ResourceNotFound extends JRPCError {
     constructor() {
         super(ErrorCodes.RESOURCE_NOT_FOUND, 'Resource not found.', {
             suggestions: [],
+        });
+    }
+}
+
+export class OperationTypeNotSupported extends JRPCError {
+    constructor() {
+        super(ErrorCodes.RESOURCE_NOT_FOUND, 'Operation type not supported.', {
+            suggestions: [
+                'Use `execute` for procedures',
+                'Use `subscribe` or `create` or `update` or `fetch` or  `delete` for resources.'
+            ],
         });
     }
 }

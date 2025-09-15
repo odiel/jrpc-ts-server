@@ -5,7 +5,7 @@ import {
     ResourceReference, OperationTypesForSubscriptions,
 } from './types/index.ts';
 
-export function id<T extends string>(): T {
+export function newId<T extends string>(): T {
     return crypto.randomUUID() as T;
 }
 
@@ -62,6 +62,24 @@ export function generateOperationResult(
     } else {
         const ref = getResourceReference(resources as Resource);
         operationResult[ref] = resources as Resource;
+    }
+
+    return operationResult;
+}
+
+export function generateEmptyOperationResult(
+    resources: Resource | Resource[],
+): OperationResult {
+    const operationResult: OperationResult = {};
+
+    if (Array.isArray(resources)) {
+        for (const resource of resources as Resource[]) {
+            const ref = getResourceReference(resource);
+            operationResult[ref] = null;
+        }
+    } else {
+        const ref = getResourceReference(resources as Resource);
+        operationResult[ref] = null;
     }
 
     return operationResult;

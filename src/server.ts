@@ -8,7 +8,8 @@ import {
     LogLevel,
     OperationContext,
     OperationResult,
-    ProcedureHandler,
+    OperationTypeNotSupported,
+    ProcedureInterface,
     ProcedureNotFound,
     ProtocolVersion,
     ProtocolVersions,
@@ -16,7 +17,7 @@ import {
     RequestMethodNotSupported,
     RequestOperation,
     Resource,
-    ResourceHandler,
+    ResourceHandlerInterface,
     ResourceNotFound,
     ResourceReference,
     ServerRequest,
@@ -27,7 +28,9 @@ import {
     UnhandledError,
     UpgradeRequestNotSupported,
 } from './types/index.ts';
-import { removeUndefined, selectProps } from './utils.ts';
+import { selectProps } from './utils.ts';
+import { ensureDir, exists } from '@std/fs';
+import { generateClient, generateDefinitions } from './client.ts';
 
 export class Server {
     private logLevel: LogLevel = LogLevel.INFO;
@@ -38,7 +41,7 @@ export class Server {
      */
     private procedures = new Map<
         string,
-        Map<string, ProcedureHandler<Resource>>
+        Map<string, ProcedureInterface<Resource, Resource>>
     >();
 
     /**
@@ -46,7 +49,7 @@ export class Server {
      */
     private resourceHandlers = new Map<
         string,
-        Map<string, ResourceHandler<Resource>>
+        Map<string, ResourceHandlerInterface<Resource>>
     >();
 
     /**
@@ -101,8 +104,12 @@ export class Server {
     /**
      * Method to register procedures
      */
-    public registerProcedures(
-        procedures: ProcedureHandler<Resource>[],
+    public registerProcedures<
+        I extends Resource,
+        O extends Resource,
+        T extends ProcedureInterface<I, O>,
+    >(
+        procedures: T[],
     ): Server {
         for (const procedure of procedures) {
             let apiProcedures = this.procedures.get(procedure.apiVersion);
@@ -110,12 +117,12 @@ export class Server {
             if (!apiProcedures) {
                 apiProcedures = new Map<
                     string,
-                    ProcedureHandler<Resource>
+                    ProcedureInterface<I, O>
                 >();
                 this.procedures.set(procedure.apiVersion, apiProcedures);
             }
 
-            apiProcedures.set(procedure.name, procedure);
+            apiProcedures.set(procedure.procedureName, procedure);
         }
 
         return this;
@@ -124,8 +131,11 @@ export class Server {
     /**
      * Method to register resource handlers
      */
-    public registerResourceHandlers(
-        resourceHandlers: ResourceHandler<Resource>[],
+    public registerResourceHandlers<
+        R extends Resource,
+        T extends ResourceHandlerInterface<R>,
+    >(
+        resourceHandlers: T[],
     ): Server {
         for (const resourceHandler of resourceHandlers) {
             let apiResourceHandlers = this.resourceHandlers.get(
@@ -135,7 +145,7 @@ export class Server {
             if (!apiResourceHandlers) {
                 apiResourceHandlers = new Map<
                     string,
-                    ResourceHandler<Resource>
+                    ResourceHandlerInterface<Resource>
                 >();
 
                 this.resourceHandlers.set(
@@ -144,7 +154,10 @@ export class Server {
                 );
             }
 
-            apiResourceHandlers.set(resourceHandler.name, resourceHandler);
+            apiResourceHandlers.set(
+                resourceHandler.resourceName,
+                resourceHandler,
+            );
         }
 
         return this;
@@ -205,6 +218,21 @@ export class Server {
         this.onOperationErrorFunc = func;
 
         return this;
+    }
+
+    /**
+     *  Generates a TS client
+     */
+    public async generateClient(path: string) {
+        if (await exists(path)) {
+            await Deno.remove(path, { recursive: true });
+        }
+
+        await ensureDir(path);
+        await Deno.writeTextFile(
+            `${path}/index.ts`,
+            generateClient(this.procedures, this.resourceHandlers),
+        );
     }
 
     /**
@@ -273,6 +301,14 @@ export class Server {
      */
     private async handleHTTPRequest(req: Request): Promise<Response> {
         if (req.method !== HttpMethod.POST) {
+            if (req.method === HttpMethod.GET) {
+                const url = new URL(req.url);
+                if (url.pathname == '/definitions') {
+                    const response = generateDefinitions(this.procedures, this.resourceHandlers)
+                    return Response.json(response, { status: 200 });
+                }
+            }
+
             const response: ServerResponseError = {
                 version: this.protocolVersion,
                 api: 'unknown',
@@ -405,10 +441,12 @@ export class Server {
             resources: {},
         };
 
-        const context = new RequestContext(removeUndefined({
-            settings: request.settings,
+        const context: RequestContext = {
+            operationContext: undefined,
             authentication: request.authentication,
-        }));
+            executionStrategy: request.settings?.execution_strategy,
+            operationTimeout: request.settings?.operation_timeout,
+        };
 
         if (this.beforeAllFunc) {
             try {
@@ -533,6 +571,13 @@ export class Server {
         context: RequestContext,
         socket?: ServerWebSocket,
     ): Promise<OperationResult> {
+        if (
+            ['execute', 'subscribe', 'create', 'update', 'fetch', 'delete']
+                .indexOf(operation.type) === -1
+        ) {
+            throw new OperationTypeNotSupported();
+        }
+
         if (operation.type == 'execute') {
             const apiProcedures = this.procedures.get(apiVersion);
 
@@ -550,7 +595,7 @@ export class Server {
             try {
                 const r = await procedureHandler.execute({
                     context,
-                    resource: operation.resource,
+                    properties: operation.properties,
                 });
 
                 return r;
@@ -663,9 +708,7 @@ export class Server {
 
         for (const reference of references) {
             const resource = operationResult[reference];
-            if (resource) {
-                response.resources[reference] = resource;
-            }
+            response.resources[reference] = resource;
         }
     }
 
@@ -690,11 +733,14 @@ export class Server {
 
         for (const reference of resourceReferences) {
             const resource = response.resources[reference];
-            if (returnProps && returnProps[resource._resource_name]) {
+            if (
+                returnProps && resource != null &&
+                returnProps[resource._resource_name]
+            ) {
                 response.resources[reference] = selectProps(resource, {
                     select: returnProps[resource._resource_name],
                 }) as Resource;
-            } else {
+            } else if (resource != null) {
                 response.resources[reference] = selectProps(resource, {
                     ignore: ['_resource_id', '_resource_name'],
                 }) as Resource;

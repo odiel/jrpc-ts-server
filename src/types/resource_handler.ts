@@ -1,12 +1,14 @@
 import {
     ApiVersion,
+    ProcedureName,
+    ProtocolVersion,
+    RequestId,
     ResourceId,
+    ResourceName,
     ResourceReference,
     ServerWebSocket,
-    ProtocolVersion,
-    ResourceName,
-    RequestId
 } from './common.ts';
+import { JSONSchema } from './json_schema.ts';
 
 export type Resource = {
     _resource_id: ResourceId;
@@ -28,45 +30,23 @@ export class OperationContext {
     }
 }
 
-export class RequestContext {
-    private globalContext: Record<string, unknown> = {};
-    public operationContext: OperationContext | undefined;
+export type RequestContext = {
+    operationContext: OperationContext | undefined;
+    authentication?: ServerRequestAuthentication;
+    executionStrategy?: 'sequential' | 'parallel';
+    operationTimeout?: number;
+};
 
-    constructor(
-        public requestContext: {
-            settings?: ServerRequestSettings;
-            authentication?: ServerRequestAuthentication;
-        },
-    ) {}
+export interface ResourceHandlerInterface<R extends Resource> {
+    resourceName: ResourceName;
+    apiVersion: ApiVersion;
+    resourceSchema: JSONSchema;
 
-    public set(key: string, value: unknown) {
-        this.globalContext[key] = value;
-    }
-
-    public get(key: string): undefined | unknown {
-        return this.globalContext[key] ?? undefined;
-    }
-}
-
-export abstract class ResourceHandler<R extends Resource> {
-    protected subscriptions: {
-        context: RequestContext;
-        socket: ServerWebSocket;
-        where?: OperationWhere;
-    }[];
-
-    constructor(
-        public name: ResourceName,
-        public apiVersion: string = 'v1',
-    ) {
-        this.subscriptions = [];
-    }
-
-    abstract create(
-        props: { context: RequestContext; resource: Partial<R> },
+    create(
+        props: { context: RequestContext; resource: Partial<Resource> },
     ): Promise<OperationResult>;
 
-    abstract fetch(
+    fetch(
         props: {
             context: RequestContext;
             resource?: Partial<R>;
@@ -74,7 +54,7 @@ export abstract class ResourceHandler<R extends Resource> {
         },
     ): Promise<OperationResult>;
 
-    abstract update(
+    update(
         props: {
             context: RequestContext;
             resource: Partial<R>;
@@ -82,39 +62,38 @@ export abstract class ResourceHandler<R extends Resource> {
         },
     ): Promise<OperationResult>;
 
-    abstract delete(
+    delete(
         props: { context: RequestContext; where?: OperationWhere },
     ): Promise<OperationResult>;
 
-    public subscribe(
+    subscribe(
         props: {
             context: RequestContext;
             socket: ServerWebSocket;
             where?: OperationWhere;
         },
-    ): void {
-        this.subscriptions.push(props);
-    }
+    ): void;
 
-    abstract publishChange(
+    publishChange(
         operationType: OperationTypesForSubscriptions,
         resource: R,
     ): Promise<void>;
 
-    abstract onChange(
+    onChange(
         operationType: OperationTypesForSubscriptions,
         resource: R,
     ): Promise<void>;
 }
 
-export abstract class ProcedureHandler<
-    R extends Resource,
-> {
-    constructor(public name: string, public apiVersion: string = 'v1') {
-    }
+// todo: redefine the input and output types
+export interface ProcedureInterface<I extends Resource, O extends Resource> {
+    procedureName: ProcedureName;
+    apiVersion: ApiVersion;
+    inputSchema: JSONSchema | undefined;
+    outputSchema: JSONSchema | undefined;
 
-    abstract execute(
-        args: { context: RequestContext; resource?: R },
+    execute(
+        args: { context: RequestContext; properties?: I },
     ): Promise<OperationResult>;
 }
 
@@ -140,7 +119,7 @@ export type ServerResponse = {
     jrpc: ProtocolVersion;
     api: ApiVersion;
     operations: ResponseResult[];
-    resources: Record<ResourceReference, Resource>;
+    resources: Record<ResourceReference, Resource | null>;
 };
 
 export type ServerResponseError = {
@@ -155,10 +134,11 @@ export type RequestOperationBase = {
 };
 
 export type OperationWhere = {
-    [key: string]: string | string[] | { equal: string } | { match: string } | {
-        gt: string;
+    id: string;
+    [key: string]: number | number[] | string | string[] | { equal: string } | { match: string } | {
+        gt: number | string;
         inclusive: boolean;
-    } | { lt: string; inclusive: boolean };
+    } | { lt: number | string; inclusive: boolean };
 };
 
 export enum OperationTypes {
@@ -194,7 +174,7 @@ export type ResourceOperation =
 export type ProcedureOperation = RequestOperationBase & {
     type: 'execute';
     procedure: string;
-    resource: Resource;
+    properties: Resource;
 };
 
 export type RequestOperation = ResourceOperation | ProcedureOperation;

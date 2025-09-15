@@ -3,6 +3,7 @@ type Brand<B> = { [__brand]: B };
 export type Branded<T, B> = T & Brand<B>;
 
 export enum HttpMethod {
+    GET = 'GET',
     POST = 'POST',
 }
 
@@ -28,6 +29,7 @@ export type ProtocolVersion = Branded<string, 'ProtocolVersion'>;
 export type ApiVersion = Branded<string, 'ApiVersion'>;
 export type RequestId = Branded<string, 'RequestId'>;
 export type ResourceName = Branded<string, 'ResourceName'>;
+export type ProcedureName = Branded<string, 'ProcedureName'>;
 export type ResourceId = Branded<string, 'ResourceId'>;
 export type ResourceReference = Branded<
     `${ResourceName}:${ResourceId}`,
