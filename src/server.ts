@@ -3,166 +3,169 @@ import {
     ExpectedRequestBodyContent,
     HttpMethod,
     InvalidJsonContent,
-    JRPCEnvironment,
+    Environment,
     JRPCError,
     LogLevel,
     OperationContext,
-    OperationResult,
     OperationTypeNotSupported,
-    ProcedureInterface,
+    ProcedureHandlerInterface, ProcedureName,
     ProcedureNotFound,
+    OperationOutput,
     ProtocolVersion,
     ProtocolVersions,
     RequestContext,
     RequestMethodNotSupported,
-    RequestOperation,
+    Operation,
     Resource,
-    ResourceHandlerInterface,
-    ResourceNotFound,
     ResourceReference,
     ServerRequest,
     ServerResponse,
     ServerResponseError,
-    ServerWebSocket,
+    ServerWebSocket, ServerWebSocketId, SubscriptionHandlerInterface, SubscriptionNotFound, SubscriptionTopic,
     toErrorResponse,
     UnhandledError,
     UpgradeRequestNotSupported,
 } from './types/index.ts';
 import { selectProps } from './utils.ts';
 import { ensureDir, exists } from '@std/fs';
-import { generateClient, generateDefinitions } from './client.ts';
+import { generateClient, generateDefinitions } from './client/index.ts';
 
 export class Server {
     private logLevel: LogLevel = LogLevel.INFO;
     private protocolVersion: ProtocolVersion = ProtocolVersions.v1;
 
     /**
-     * List of registered procedures per API version
+     * List of registered procedure handlers per API
      */
-    private procedures = new Map<
-        string,
-        Map<string, ProcedureInterface<Resource, Resource>>
+    private registeredProcedures = new Map<
+        ApiVersion,
+        Map<ProcedureName, ProcedureHandlerInterface>
     >();
 
     /**
-     * List of registered resource handlers per API version
+     * List of registered subscription handlers per API
      */
-    private resourceHandlers = new Map<
-        string,
-        Map<string, ResourceHandlerInterface<Resource>>
-    >();
+    private registeredSubscriptions = new Map<
+        ApiVersion,
+        Map<SubscriptionTopic, SubscriptionHandlerInterface>
+    >()
 
     /**
-     * Function to execute as first step of a request right before processing any operation
+     * Callback function to execute as first step of a request before processing any operation
      */
     private beforeAllFunc?: <R extends Resource>(
         context: RequestContext,
     ) => Promise<void>;
 
     /**
-     * Function to execute before processing an operation
+     * Callback function to execute before processing each operation
      */
-    private beforeOperationFunc?: <R extends Resource>(
+    private beforeEachFunc?: <R extends Resource>(
+        operationContext: OperationContext,
         context: RequestContext,
     ) => Promise<void>;
 
     /**
-     * Function to execute after an operation has been processed
+     * Callback function to execute after processing each operation
      */
-    private afterOperationFunc?: <R extends Resource>(
+    private afterEachFunc?: <R extends Resource>(
+        operationContext: OperationContext,
         context: RequestContext,
     ) => Promise<void>;
 
     /**
-     * Function to execute after all operations have been processed
+     * Callback function to execute after processing all operations in one request
      */
     private afterAllFunc?: <R extends Resource>(
         context: RequestContext,
     ) => Promise<void>;
 
     /**
-     * Function to execute when an operation errs
+     * Callback function to execute when an unhandled error occurs
      */
-    private onOperationErrorFunc?: <R extends Resource>(
-        context: RequestContext,
+    private onErrorFunc?: <R extends Resource>(
+        operationContext: OperationContext,
         error: Error,
     ) => Promise<JRPCError | undefined>;
 
     /**
-     * List of connected WS clients
+     * List of connected websocket clients
      */
-    private connectedClients = new Map<string, ServerWebSocket>();
+    private connectedSockets = new Map<string, ServerWebSocket>();
+
+    /**
+     * Map of opened websocket connections for each subscription topic
+     */
+    private subscriptionsByTopics = new Map<
+        string,
+        { context: RequestContext; socket: ServerWebSocket }[]
+    >();
+
+    /**
+     * Map of websocket ids and the subscription topics they are listening to
+     */
+    private socketsInSubscriptions = new Map<
+        ServerWebSocketId,
+        { topic: string; }[]
+    >();
 
     constructor(
         private configuration: {
             host: string;
             port: number;
-            env: JRPCEnvironment;
+            env: Environment;
         },
     ) {}
 
     /**
-     * Method to register procedures
+     * Use this method to register procedure handlers
      */
-    public registerProcedures<
-        I extends Resource,
-        O extends Resource,
-        T extends ProcedureInterface<I, O>,
+    public registerProcedureHandlers<
+        T extends ProcedureHandlerInterface,
     >(
         procedures: T[],
     ): Server {
         for (const procedure of procedures) {
-            let apiProcedures = this.procedures.get(procedure.apiVersion);
+            let apiProcedures = this.registeredProcedures.get(procedure.api);
 
             if (!apiProcedures) {
                 apiProcedures = new Map<
-                    string,
-                    ProcedureInterface<I, O>
+                    ProcedureName,
+                    ProcedureHandlerInterface
                 >();
-                this.procedures.set(procedure.apiVersion, apiProcedures);
+                this.registeredProcedures.set(procedure.api, apiProcedures);
             }
 
-            apiProcedures.set(procedure.procedureName, procedure);
+            apiProcedures.set(procedure.name, procedure);
         }
 
         return this;
     }
 
     /**
-     * Method to register resource handlers
+     * Use this method to register subscription handlers
      */
-    public registerResourceHandlers<
-        R extends Resource,
-        T extends ResourceHandlerInterface<R>,
-    >(
-        resourceHandlers: T[],
-    ): Server {
-        for (const resourceHandler of resourceHandlers) {
-            let apiResourceHandlers = this.resourceHandlers.get(
-                resourceHandler.apiVersion,
-            );
+    public registerSubscriptionHandlers(subscriptionHandlers: SubscriptionHandlerInterface[]) {
+        for (const subscriptionHandler of subscriptionHandlers) {
+            let apiSubscriptions = this.registeredSubscriptions.get(subscriptionHandler.api);
 
-            if (!apiResourceHandlers) {
-                apiResourceHandlers = new Map<
-                    string,
-                    ResourceHandlerInterface<Resource>
+            if (!apiSubscriptions) {
+                apiSubscriptions = new Map<
+                    SubscriptionTopic,
+                    SubscriptionHandlerInterface
                 >();
-
-                this.resourceHandlers.set(
-                    resourceHandler.apiVersion,
-                    apiResourceHandlers,
-                );
+                this.registeredSubscriptions.set(subscriptionHandler.api, apiSubscriptions);
             }
 
-            apiResourceHandlers.set(
-                resourceHandler.resourceName,
-                resourceHandler,
-            );
+            apiSubscriptions.set(subscriptionHandler.topic, subscriptionHandler);
         }
 
         return this;
     }
 
+    /**
+     * Sets a callback function to be executed before any operation is processed
+     */
     public beforeAll(
         func: (
             context: RequestContext,
@@ -174,31 +177,36 @@ export class Server {
     }
 
     /**
-     * Sets a function to be executed right before processing an operation
+     * Sets a callback function to be executed before processing each operation
      */
-    public beforeOperation(
+    public beforeEach(
         func: (
+            operationContext: OperationContext,
             context: RequestContext,
         ) => Promise<void>,
     ) {
-        this.beforeOperationFunc = func;
+        this.beforeEachFunc = func;
 
         return this;
     }
 
     /**
-     * Sets a function to be executed right before processing an operation
+     * Sets a callback function to be executed after each operation is processed
      */
-    public afterOperation(
+    public afterEach(
         func: (
+            operationContext: OperationContext,
             context: RequestContext,
         ) => Promise<void>,
     ) {
-        this.afterOperationFunc = func;
+        this.afterEachFunc = func;
 
         return this;
     }
 
+    /**
+     * Sets a callback function to be executed after all operations have been processed
+     */
     public afterAll(
         func: (
             context: RequestContext,
@@ -209,13 +217,16 @@ export class Server {
         return this;
     }
 
-    public onOperationError(
+    /**
+     * Sets a callback function to be executed when an unhandled error occurs
+     */
+    public onError(
         func: (
-            context: RequestContext,
+            operationContext: OperationContext,
             error: Error,
         ) => Promise<JRPCError | undefined>,
     ) {
-        this.onOperationErrorFunc = func;
+        this.onErrorFunc = func;
 
         return this;
     }
@@ -223,15 +234,17 @@ export class Server {
     /**
      *  Generates a TS client
      */
-    public async generateClient(path: string) {
-        if (await exists(path)) {
-            await Deno.remove(path, { recursive: true });
+    public async generateClients(configuration: { language: 'typescript', path: string}[]) {
+        const typesScript = configuration[0];
+
+        if (await exists(typesScript.path)) {
+            await Deno.remove(typesScript.path, { recursive: true });
         }
 
-        await ensureDir(path);
+        await ensureDir(typesScript.path);
         await Deno.writeTextFile(
-            `${path}/index.ts`,
-            generateClient(this.procedures, this.resourceHandlers),
+            `${typesScript.path}/index.ts`,
+            generateClient(this.registeredProcedures),
         );
     }
 
@@ -285,7 +298,7 @@ export class Server {
 
         if (req.headers.get('upgrade') != 'websocket') {
             const response: ServerResponseError = {
-                version: this.protocolVersion,
+                jrpc: this.protocolVersion,
                 api: 'unknown',
                 error: toErrorResponse(new UpgradeRequestNotSupported()),
             };
@@ -304,13 +317,13 @@ export class Server {
             if (req.method === HttpMethod.GET) {
                 const url = new URL(req.url);
                 if (url.pathname == '/definitions') {
-                    const response = generateDefinitions(this.procedures, this.resourceHandlers)
+                    const response = generateDefinitions(this.registeredProcedures);
                     return Response.json(response, { status: 200 });
                 }
             }
 
             const response: ServerResponseError = {
-                version: this.protocolVersion,
+                jrpc: this.protocolVersion,
                 api: 'unknown',
                 error: toErrorResponse(new RequestMethodNotSupported()),
             };
@@ -320,7 +333,7 @@ export class Server {
 
         if (!req.body) {
             const response: ServerResponseError = {
-                version: this.protocolVersion,
+                jrpc: this.protocolVersion,
                 api: 'unknown',
                 error: toErrorResponse(new ExpectedRequestBodyContent()),
             };
@@ -351,7 +364,7 @@ export class Server {
             request = JSON.parse(rawContent);
         } catch (e) {
             const response: ServerResponseError = {
-                version: this.protocolVersion,
+                jrpc: this.protocolVersion,
                 api: 'unknown',
                 error: toErrorResponse(new InvalidJsonContent()),
             };
@@ -375,8 +388,8 @@ export class Server {
         const webSocketUpgrade = Deno.upgradeWebSocket(req);
         const socket = webSocketUpgrade.socket as ServerWebSocket;
 
-        socket.id = crypto.randomUUID();
-        this.connectedClients.set(socket.id, socket);
+        socket.id = crypto.randomUUID() as ServerWebSocketId;
+        this.connectedSockets.set(socket.id, socket);
 
         socket.addEventListener('open', () => {
             if (this.logLevel <= LogLevel.INFO) {
@@ -386,7 +399,7 @@ export class Server {
         socket.addEventListener('message', async (event) => {
             if (!event.data) {
                 const response: ServerResponseError = {
-                    version: this.protocolVersion,
+                    jrpc: this.protocolVersion,
                     api: 'unknown',
                     error: toErrorResponse(new ExpectedRequestBodyContent()),
                 };
@@ -401,7 +414,7 @@ export class Server {
                 request = JSON.parse(event.data);
             } catch (_e) {
                 const response: ServerResponseError = {
-                    version: this.protocolVersion,
+                    jrpc: this.protocolVersion,
                     api: 'unknown',
                     error: toErrorResponse(new InvalidJsonContent()),
                 };
@@ -422,7 +435,25 @@ export class Server {
                 console.log(`ws: ${socket.id} client disconnected.`);
             }
 
-            this.connectedClients.delete(socket.id);
+            this.connectedSockets.delete(socket.id);
+
+            // closing registered subscriptions
+            const socketInSubscription = this.socketsInSubscriptions.get(socket.id);
+
+            if (socketInSubscription) {
+                for (const entry of socketInSubscription) {
+                    const subscriptionTopic = this.subscriptionsByTopics.get(entry.topic);
+                    if (subscriptionTopic) {
+                        const position = subscriptionTopic.findIndex(e => e.socket.id == socket.id)
+                        subscriptionTopic.splice(position, 1);
+                    }
+                }
+
+                this.socketsInSubscriptions.delete(socket.id);
+            }
+
+            console.log(this.socketsInSubscriptions)
+            this.subscriptionsByTopics.keys().forEach(e => { console.log(this.subscriptionsByTopics.get(e)!.length)})
         });
 
         return webSocketUpgrade.response;
@@ -442,7 +473,6 @@ export class Server {
         };
 
         const context: RequestContext = {
-            operationContext: undefined,
             authentication: request.authentication,
             executionStrategy: request.settings?.execution_strategy,
             operationTimeout: request.settings?.operation_timeout,
@@ -458,14 +488,15 @@ export class Server {
 
         // todo: execute the operations in parallel or sequence, depending on the execution type defined in the request
         for (const operation of operations) {
-            context.operationContext = new OperationContext(
-                apiVersion,
-                operation,
-            );
+            const operationContext: OperationContext = {
+                api: apiVersion,
+                operation: operation,
+                result: undefined,
+            };
 
-            if (this.beforeOperationFunc) {
+            if (this.beforeEachFunc) {
                 try {
-                    await this.beforeOperationFunc(context);
+                    await this.beforeEachFunc(operationContext, context);
                 } catch (e) {
                     if (e instanceof JRPCError) {
                         this.processOperationError(
@@ -486,21 +517,22 @@ export class Server {
                 }
             }
 
-            let result: OperationResult;
+            let result: OperationOutput;
 
             try {
                 result = await this.processOperation(
                     apiVersion,
                     operation,
                     context,
+                    operationContext,
                     socket,
                 );
 
-                context.operationContext.result = result;
+                operationContext.result = result;
 
-                if (this.afterOperationFunc) {
+                if (this.afterEachFunc) {
                     try {
-                        await this.afterOperationFunc(context);
+                        await this.afterEachFunc(operationContext, context);
                     } catch (e) {
                         if (e instanceof JRPCError) {
                             this.processOperationError(
@@ -521,7 +553,7 @@ export class Server {
                 }
 
                 this.processOperationResult(
-                    context.operationContext.result,
+                    operationContext.result,
                     operation,
                     serverResponse,
                 );
@@ -533,9 +565,9 @@ export class Server {
                 );
             }
 
-            if (this.afterOperationFunc) {
+            if (this.afterEachFunc) {
                 try {
-                    await this.afterOperationFunc(context);
+                    await this.afterEachFunc(operationContext, context);
                 } catch (e) {
                     if (e instanceof JRPCError) {
                         this.processOperationError(
@@ -566,20 +598,21 @@ export class Server {
     }
 
     private async processOperation<R extends Resource>(
-        apiVersion: ApiVersion,
-        operation: RequestOperation,
+        api: ApiVersion,
+        operation: Operation,
         context: RequestContext,
+        operationContext: OperationContext,
         socket?: ServerWebSocket,
-    ): Promise<OperationResult> {
+    ): Promise<OperationOutput> {
         if (
-            ['execute', 'subscribe', 'create', 'update', 'fetch', 'delete']
+            ['execute', 'subscribe']
                 .indexOf(operation.type) === -1
         ) {
             throw new OperationTypeNotSupported();
         }
 
         if (operation.type == 'execute') {
-            const apiProcedures = this.procedures.get(apiVersion);
+            const apiProcedures = this.registeredProcedures.get(api);
 
             if (!apiProcedures) {
                 throw new ProcedureNotFound();
@@ -594,78 +627,53 @@ export class Server {
 
             try {
                 const r = await procedureHandler.execute({
+                    operationContext,
                     context,
-                    properties: operation.properties,
+                    input: operation.input,
                 });
 
                 return r;
             } catch (e) {
                 throw await this.handleOperationError(
-                    context,
+                    operationContext,
                     operation,
                     e as Error,
                 );
             }
         }
 
-        const apiResourceHandlers = this.resourceHandlers.get(apiVersion);
+        if (operation.type == 'subscribe' && socket) {
+            const apiSubscriptions = this.registeredSubscriptions.get(api);
 
-        if (!apiResourceHandlers) {
-            throw new ResourceNotFound();
-        }
-
-        const resource = operation.resource;
-        const resourceHandler = apiResourceHandlers.get(resource);
-
-        if (!resourceHandler) {
-            throw new ResourceNotFound();
-        }
-
-        if (operation.type == 'subscribe') {
-            if (socket) {
-                resourceHandler.subscribe({
-                    context,
-                    socket,
-                    where: 'where' in operation ? operation.where : undefined,
-                });
+            if (!apiSubscriptions) {
+                throw new SubscriptionNotFound();
             }
 
-            return undefined;
-        }
+            const topic = operation.topic;
+            const subscriptionHandler = apiSubscriptions.get(topic);
 
-        try {
-            const result = await resourceHandler[operation.type](
-                {
-                    context,
-                    resource: operation.properties,
-                    where: 'where' in operation ? operation.where : undefined,
-                },
-            );
-
-            if (result) {
-                return result;
+            if (!subscriptionHandler) {
+                throw new SubscriptionNotFound();
             }
 
+            subscriptionHandler.registerSocketConnection(socket, context, operationContext);
+
+            // todo: remove the subscriptions if the socket disconnects
+
             return undefined;
-        } catch (e) {
-            throw await this.handleOperationError(
-                context,
-                operation,
-                e as Error,
-            );
         }
     }
 
     private async handleOperationError(
-        context: RequestContext,
-        operation: RequestOperation,
+        operationContext: OperationContext,
+        operation: Operation,
         e: Error,
     ): Promise<Error> {
         let customError: JRPCError | undefined;
 
-        if (this.onOperationErrorFunc) {
-            customError = await this.onOperationErrorFunc(
-                context,
+        if (this.onErrorFunc) {
+            customError = await this.onErrorFunc(
+                operationContext,
                 e,
             );
         }
@@ -682,8 +690,8 @@ export class Server {
     }
 
     private processOperationResult(
-        operationResult: OperationResult,
-        operation: RequestOperation,
+        operationResult: OperationOutput,
+        operation: Operation,
         response: ServerResponse,
     ) {
         if (operationResult === undefined) {
@@ -699,11 +707,7 @@ export class Server {
 
         response.operations.push({
             id: operation.id,
-            results: references.length > 1
-                ? references
-                : references.length == 0
-                ? null
-                : references[0],
+            results: references.length > 0 ? references : null,
         });
 
         for (const reference of references) {
@@ -714,7 +718,7 @@ export class Server {
 
     private processOperationError(
         error: JRPCError,
-        operation: RequestOperation,
+        operation: Operation,
         response: ServerResponse,
     ) {
         response.operations.push({

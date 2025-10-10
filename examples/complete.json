@@ -1,0 +1,25 @@
+{
+  jrpc: "v1",
+  api: "v1",
+  operations: [
+    {
+      id: "377174a4-24f3-4a14-9d7d-6d57011209e6",
+      type: "procedure",
+      name: "deleteOrganization",
+      input: {
+        id: "fb603981-1bd8-491e-bc32-c3b2c7d31e61"
+      }
+    },
+    {
+      id: "377174a4-24f3-4a14-9d7d-6d57011209e6",
+      type: "subscription",
+      topic: "organization"
+    }
+  ],
+  return: {},
+  authentication: {
+    scheme: "bearer",
+    token: "",
+    token_format: "JWT"
+  }
+}

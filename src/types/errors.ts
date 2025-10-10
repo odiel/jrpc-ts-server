@@ -1,4 +1,4 @@
-import { ErrorResponse } from './resource_handler.ts';
+import { ErrorResponse } from './common.ts';
 
 export enum ErrorCodes {
     UPGRADE_REQUEST_NOT_SUPPORTED = 'JRPC_UPGRADE_REQUEST_NOT_SUPPORTED',
@@ -7,11 +7,14 @@ export enum ErrorCodes {
     INVALID_JSON_CONTENT = 'JRPC_INVALID_JSON_CONTENT',
 
     PROCEDURE_NOT_FOUND = 'JRPC_PROCEDURE_NOT_FOUND',
-    RESOURCE_NOT_FOUND = 'JRPC_RESOURCE_NOT_FOUND',
-    UNHANDLED_ERROR = 'JRPC_UNHANDLED_ERROR',
+    OPERATION_NOT_SUPPORTED = 'JRPC_OPERATION_NOT_SUPPORTED',
+
+    SUBSCRIPTION_NOT_FOUND = 'JRPC_SUBSCRIPTION_NOT_FOUND',
 
     NOT_AUTHENTICATED = 'JRPC_NOT_AUTHENTICATED',
     NOT_AUTHORIZED = 'JRPC_NOT_AUTHORIZED',
+
+    UNHANDLED_ERROR = 'JRPC_UNHANDLED_ERROR',
 }
 
 export class JRPCError extends Error {
@@ -82,9 +85,9 @@ export class ProcedureNotFound extends JRPCError {
     }
 }
 
-export class ResourceNotFound extends JRPCError {
+export class SubscriptionNotFound extends JRPCError {
     constructor() {
-        super(ErrorCodes.RESOURCE_NOT_FOUND, 'Resource not found.', {
+        super(ErrorCodes.SUBSCRIPTION_NOT_FOUND, 'Subscription not found.', {
             suggestions: [],
         });
     }
@@ -92,24 +95,9 @@ export class ResourceNotFound extends JRPCError {
 
 export class OperationTypeNotSupported extends JRPCError {
     constructor() {
-        super(ErrorCodes.RESOURCE_NOT_FOUND, 'Operation type not supported.', {
-            suggestions: [
-                'Use `execute` for procedures',
-                'Use `subscribe` or `create` or `update` or `fetch` or  `delete` for resources.'
-            ],
+        super(ErrorCodes.OPERATION_NOT_SUPPORTED, 'Operation type not supported.', {
+            suggestions: [],
         });
-    }
-}
-
-export class UnhandledError extends JRPCError {
-    constructor(e: Error) {
-        super(
-            ErrorCodes.UNHANDLED_ERROR,
-            'An unhandled error occurred.',
-            {
-                details: getErrorDetails(e),
-            },
-        );
     }
 }
 
@@ -140,6 +128,18 @@ export function toErrorResponse(error: JRPCError): ErrorResponse {
     };
 }
 
+export class UnhandledError extends JRPCError {
+    constructor(e: Error) {
+        super(
+            ErrorCodes.UNHANDLED_ERROR,
+            'An unhandled error occurred.',
+            {
+                details: getErrorDetails(e),
+            },
+        );
+    }
+}
+
 export function getErrorDetails(e: Error): {
     error_name: string;
     error_message: string;
@@ -149,3 +149,4 @@ export function getErrorDetails(e: Error): {
         error_message: e.message,
     };
 }
+

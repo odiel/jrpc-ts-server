@@ -1,4 +1,3 @@
-export type Schema = ObjectSchema | ArraySchema | StringSchema | NumberSchema | IntegerSchema | BooleanSchema | NullSchema;
 export type _JSONSchema = boolean | JSONSchema;
 export type JSONSchema = {
     [k: string]: unknown;
@@ -87,3 +86,9 @@ export interface NullSchema extends JSONSchema {
     type: "null";
 }
 
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonArray = Json[];
+export type JsonObject = { [key: string]: Json };
+export type JsonComposite = JsonArray | JsonObject;
+export type Json = JsonPrimitive | JsonComposite;

@@ -1,8 +1,5 @@
-- implement resolving referenced property values
-    {
-        id: '123'
-        book: 'Book/ABC'
-    }
+- allow to access the results from previous operations in the next operations
+
 
 - create a JSON schema to validate the request
 - limit how much data we read from the body to throw an error and discard the request
