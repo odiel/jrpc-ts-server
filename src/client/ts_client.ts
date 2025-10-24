@@ -117,7 +117,7 @@ export class Client_${apiVersion} {
             console.log(payload)
             
             const url = 'http://' + this.host + ':' + this.port;
-
+            
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {

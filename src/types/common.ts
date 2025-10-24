@@ -7,6 +7,7 @@ export type Branded<T, B> = T & Brand<B>;
 export enum HttpMethod {
     GET = 'GET',
     POST = 'POST',
+    OPTIONS = 'OPTIONS',
 }
 
 export enum Environment {
@@ -23,7 +24,7 @@ export enum LogLevel {
 }
 
 export type ProtocolVersion = Branded<string, 'ProtocolVersion'>;
-export type ApiVersion = Branded<string, 'ApiVersion'>;
+export type Api = Branded<string, 'Api'>;
 export type OperationId = Branded<string, 'OperationId'>;
 export type ProcedureName = Branded<string, 'ProcedureName'>;
 export type SubscriptionTopic = Branded<string, 'SubscriptionTopic'>;
@@ -78,19 +79,16 @@ export type OperationOutput =
 export type Operation = ProcedureOperation | SubscriptionOperation;
 
 export type OperationContext = {
-    api: ApiVersion;
+    api: Api;
     operation: Operation;
     result: OperationOutput;
 };
 
-export type OperationResults =
-    & { id: OperationId }
-    & ({
-    results: ResourceReference | ResourceReference[] | null;
+export type OperationResults = {
+    result: ResourceReference | ResourceReference[] | null;
 } | {
     error: ErrorResponse;
-});
-
+};
 
 //
 // export type OperationWhere = {
@@ -104,11 +102,10 @@ export type OperationResults =
 // };
 //
 
-
 // todo: redefine the input and output types
 export interface ProcedureHandlerInterface {
     name: ProcedureName;
-    api: ApiVersion;
+    api: Api;
     input: JSONSchema | undefined;
     output: JSONSchema | undefined;
 
@@ -123,7 +120,7 @@ export interface ProcedureHandlerInterface {
 
 export interface SubscriptionHandlerInterface {
     topic: SubscriptionTopic;
-    api: ApiVersion;
+    api: Api;
 
     registerSocketConnection(
         socket: ServerWebSocket,
@@ -151,7 +148,7 @@ export type ServerRequestAuthentication = {
 
 export type ServerRequest = {
     jrpc: ProtocolVersion;
-    api: ApiVersion;
+    api: Api;
     settings?: ServerRequestSettings;
     authentication?: ServerRequestAuthentication;
     operations: Operation[];
@@ -160,8 +157,8 @@ export type ServerRequest = {
 
 export type ServerResponse = {
     jrpc: ProtocolVersion;
-    api: ApiVersion;
-    operations: OperationResults[];
+    api: Api;
+    operations: Record<OperationId, OperationResults>;
     resources: Record<ResourceReference, Resource | null>;
 };
 

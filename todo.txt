@@ -1,4 +1,8 @@
 - allow to access the results from previous operations in the next operations
+// todo: validate the input JSON payload
+    // use the input json schema from the procedure to validate the input
+    // use the output json schema from the procedure to validate the output
+// todo: remove the subscriptions if the socket disconnects
 
 
 - create a JSON schema to validate the request

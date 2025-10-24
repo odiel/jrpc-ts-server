@@ -1,33 +1,38 @@
 import {
-    ApiVersion,
+    Api,
+    Environment,
     ExpectedRequestBodyContent,
     HttpMethod,
     InvalidJsonContent,
-    Environment,
     JRPCError,
     LogLevel,
+    Operation,
     OperationContext,
-    OperationTypeNotSupported,
-    ProcedureHandlerInterface, ProcedureName,
-    ProcedureNotFound,
     OperationOutput,
+    OperationTypeNotSupported,
+    ProcedureHandlerInterface,
+    ProcedureName,
+    ProcedureNotFound,
     ProtocolVersion,
     ProtocolVersions,
     RequestContext,
     RequestMethodNotSupported,
-    Operation,
     Resource,
     ResourceReference,
     ServerRequest,
     ServerResponse,
     ServerResponseError,
-    ServerWebSocket, ServerWebSocketId, SubscriptionHandlerInterface, SubscriptionNotFound, SubscriptionTopic,
+    ServerWebSocket,
+    ServerWebSocketId,
+    SubscriptionHandlerInterface,
+    SubscriptionNotFound,
+    SubscriptionTopic,
     toErrorResponse,
     UnhandledError,
     UpgradeRequestNotSupported,
 } from './types/index.ts';
 import { selectProps } from './utils.ts';
-import { ensureDir, exists } from '@std/fs';
+import { exists } from '@std/fs';
 import { generateClient, generateDefinitions } from './client/index.ts';
 
 export class Server {
@@ -38,7 +43,7 @@ export class Server {
      * List of registered procedure handlers per API
      */
     private registeredProcedures = new Map<
-        ApiVersion,
+        Api,
         Map<ProcedureName, ProcedureHandlerInterface>
     >();
 
@@ -46,9 +51,9 @@ export class Server {
      * List of registered subscription handlers per API
      */
     private registeredSubscriptions = new Map<
-        ApiVersion,
+        Api,
         Map<SubscriptionTopic, SubscriptionHandlerInterface>
-    >()
+    >();
 
     /**
      * Callback function to execute as first step of a request before processing any operation
@@ -106,16 +111,35 @@ export class Server {
      */
     private socketsInSubscriptions = new Map<
         ServerWebSocketId,
-        { topic: string; }[]
+        { topic: string }[]
     >();
+
+    private corsHeaders: Record<string, string>;
 
     constructor(
         private configuration: {
             host: string;
             port: number;
             env: Environment;
+            cors?: {
+                accessControlAllowOrigin?: string;
+            };
         },
-    ) {}
+    ) {
+        const allowedHeaders = [
+            'Access-Control-Allow-Origin',
+            'Access-Control-Allow-Methods',
+            'Access-Control-Allow-Headers',
+            'Content-Type',
+        ];
+
+        this.corsHeaders = {
+            'Access-Control-Allow-Origin':
+                this.configuration.cors?.accessControlAllowOrigin || '*',
+            'Access-Control-Allow-Method': 'POST, GET, OPTIONS',
+            'Access-Control-Allow-Headers': allowedHeaders.join(', '),
+        };
+    }
 
     /**
      * Use this method to register procedure handlers
@@ -136,6 +160,12 @@ export class Server {
                 this.registeredProcedures.set(procedure.api, apiProcedures);
             }
 
+            if (apiProcedures.get(procedure.name)) {
+                throw new Error(
+                    `[${procedure.constructor.name}] is registering procedure [${procedure.name}] which is already registered.`,
+                );
+            }
+
             apiProcedures.set(procedure.name, procedure);
         }
 
@@ -145,19 +175,35 @@ export class Server {
     /**
      * Use this method to register subscription handlers
      */
-    public registerSubscriptionHandlers(subscriptionHandlers: SubscriptionHandlerInterface[]) {
+    public registerSubscriptionHandlers(
+        subscriptionHandlers: SubscriptionHandlerInterface[],
+    ) {
         for (const subscriptionHandler of subscriptionHandlers) {
-            let apiSubscriptions = this.registeredSubscriptions.get(subscriptionHandler.api);
+            let apiSubscriptions = this.registeredSubscriptions.get(
+                subscriptionHandler.api,
+            );
 
             if (!apiSubscriptions) {
                 apiSubscriptions = new Map<
                     SubscriptionTopic,
                     SubscriptionHandlerInterface
                 >();
-                this.registeredSubscriptions.set(subscriptionHandler.api, apiSubscriptions);
+                this.registeredSubscriptions.set(
+                    subscriptionHandler.api,
+                    apiSubscriptions,
+                );
             }
 
-            apiSubscriptions.set(subscriptionHandler.topic, subscriptionHandler);
+            if (apiSubscriptions.get(subscriptionHandler.topic)) {
+                throw new Error(
+                    `[${subscriptionHandler.constructor.name}] is registering subscription topic [${subscriptionHandler.topic}] which is already registered.`,
+                );
+            }
+
+            apiSubscriptions.set(
+                subscriptionHandler.topic,
+                subscriptionHandler,
+            );
         }
 
         return this;
@@ -234,16 +280,17 @@ export class Server {
     /**
      *  Generates a TS client
      */
-    public async generateClients(configuration: { language: 'typescript', path: string}[]) {
+    public async generateClients(
+        configuration: { language: 'typescript'; path: string }[],
+    ) {
         const typesScript = configuration[0];
 
         if (await exists(typesScript.path)) {
             await Deno.remove(typesScript.path, { recursive: true });
         }
 
-        await ensureDir(typesScript.path);
         await Deno.writeTextFile(
-            `${typesScript.path}/index.ts`,
+            typesScript.path,
             generateClient(this.registeredProcedures),
         );
     }
@@ -313,15 +360,24 @@ export class Server {
      * Handles request coming through HTTP
      */
     private async handleHTTPRequest(req: Request): Promise<Response> {
-        if (req.method !== HttpMethod.POST) {
-            if (req.method === HttpMethod.GET) {
-                const url = new URL(req.url);
-                if (url.pathname == '/definitions') {
-                    const response = generateDefinitions(this.registeredProcedures);
-                    return Response.json(response, { status: 200 });
-                }
+        if (req.method === HttpMethod.GET) {
+            const url = new URL(req.url);
+            if (url.pathname == '/definitions') {
+                const response = generateDefinitions(
+                    this.registeredProcedures,
+                );
+                return Response.json(response, { status: 200 });
             }
+        }
 
+        if (req.method === HttpMethod.OPTIONS) {
+            return Response.json('', {
+                status: 200,
+                headers: this.corsHeaders,
+            });
+        }
+
+        if (req.method !== HttpMethod.POST) {
             const response: ServerResponseError = {
                 jrpc: this.protocolVersion,
                 api: 'unknown',
@@ -374,7 +430,13 @@ export class Server {
 
         try {
             const serverResponse = await this.processRequest(request);
-            return Response.json(serverResponse);
+            return Response.json(serverResponse, {
+                status: 200,
+                headers: {
+                    'Access-Control-Allow-Origin': this.configuration.cors
+                        ?.accessControlAllowOrigin || '*',
+                },
+            });
         } catch (e) {
             //todo: process the error
             throw e;
@@ -438,13 +500,19 @@ export class Server {
             this.connectedSockets.delete(socket.id);
 
             // closing registered subscriptions
-            const socketInSubscription = this.socketsInSubscriptions.get(socket.id);
+            const socketInSubscription = this.socketsInSubscriptions.get(
+                socket.id,
+            );
 
             if (socketInSubscription) {
                 for (const entry of socketInSubscription) {
-                    const subscriptionTopic = this.subscriptionsByTopics.get(entry.topic);
+                    const subscriptionTopic = this.subscriptionsByTopics.get(
+                        entry.topic,
+                    );
                     if (subscriptionTopic) {
-                        const position = subscriptionTopic.findIndex(e => e.socket.id == socket.id)
+                        const position = subscriptionTopic.findIndex((e) =>
+                            e.socket.id == socket.id
+                        );
                         subscriptionTopic.splice(position, 1);
                     }
                 }
@@ -452,8 +520,10 @@ export class Server {
                 this.socketsInSubscriptions.delete(socket.id);
             }
 
-            console.log(this.socketsInSubscriptions)
-            this.subscriptionsByTopics.keys().forEach(e => { console.log(this.subscriptionsByTopics.get(e)!.length)})
+            console.log(this.socketsInSubscriptions);
+            this.subscriptionsByTopics.keys().forEach((e) => {
+                console.log(this.subscriptionsByTopics.get(e)!.length);
+            });
         });
 
         return webSocketUpgrade.response;
@@ -468,7 +538,7 @@ export class Server {
         const serverResponse: ServerResponse = {
             jrpc,
             api: apiVersion,
-            operations: [],
+            operations: {},
             resources: {},
         };
 
@@ -598,7 +668,7 @@ export class Server {
     }
 
     private async processOperation<R extends Resource>(
-        api: ApiVersion,
+        api: Api,
         operation: Operation,
         context: RequestContext,
         operationContext: OperationContext,
@@ -656,7 +726,11 @@ export class Server {
                 throw new SubscriptionNotFound();
             }
 
-            subscriptionHandler.registerSocketConnection(socket, context, operationContext);
+            subscriptionHandler.registerSocketConnection(
+                socket,
+                context,
+                operationContext,
+            );
 
             // todo: remove the subscriptions if the socket disconnects
 
@@ -695,20 +769,18 @@ export class Server {
         response: ServerResponse,
     ) {
         if (operationResult === undefined) {
-            response.operations.push({
-                id: operation.id,
-                results: null,
-            });
+            response.operations[operation.id] = {
+                result: null,
+            };
 
             return;
         }
 
         const references = Object.keys(operationResult) as ResourceReference[];
 
-        response.operations.push({
-            id: operation.id,
-            results: references.length > 0 ? references : null,
-        });
+        response.operations[operation.id] = {
+            result: references.length > 0 ? references : null,
+        };
 
         for (const reference of references) {
             const resource = operationResult[reference];
@@ -721,10 +793,9 @@ export class Server {
         operation: Operation,
         response: ServerResponse,
     ) {
-        response.operations.push({
-            id: operation.id,
+        response.operations[operation.id] = {
             error: toErrorResponse(error),
-        });
+        };
     }
 
     private returnSelectedProps(
